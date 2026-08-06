@@ -285,3 +285,6 @@ compose.override.yml
 *.tmp
 # Local experiments
 /New folder/
+
+# Local experiments
+/New folder/
