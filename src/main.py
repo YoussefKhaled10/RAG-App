@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routes import base, data, nlp , tasks
+from routes import base, tasks
 from routes.auth import auth_router
 from routes.users import users_router
 from routes.roles import roles_router
