@@ -1,13 +1,7 @@
 import inspect
 
 from fastapi import FastAPI
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-
-from core.credentials_encryption import CredentialsEncryptionService
-from helpers.config import get_settings
-from routes import base, tasks
+from routes import base, data, nlp , tasks
 from routes.auth import auth_router
 from routes.database_connections import database_connections_router
 from routes.files import files_router
