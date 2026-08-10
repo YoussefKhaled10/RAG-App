@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import logging
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -18,6 +19,8 @@ from stores.vectordb.VectorDBProviderFactory import (
     VectorDBProviderFactory,
 )
 from utils.idempotency_manager import IdempotencyManager
+
+logger = logging.getLogger(__name__)
 
 
 async def _maybe_await(value):
@@ -69,8 +72,23 @@ async def process_uploaded_file_async(
 
     task_record = None
     asset_model = None
+    chunk_model = None
+    nlp_controller = None
+    project = None
+    new_chunk_ids: list[int] = []
+    stage = "initialization"
 
     try:
+        logger.info(
+            "File processing started. tenant_id=%s project_id=%s "
+            "asset_id=%s file_id=%s task_id=%s",
+            tenant_uuid,
+            project_id,
+            asset_id,
+            file_id,
+            celery_task_id,
+        )
+        stage = "idempotency_check"
         should_execute, existing_task = (
             await idempotency_manager.should_execute_task(
                 task_name=task_name,
@@ -88,6 +106,7 @@ async def process_uploaded_file_async(
                 "execution_id": existing_task.execution_id,
             }
 
+        stage = "task_record_creation"
         task_record = await idempotency_manager.create_task_record(
             task_name=task_name,
             task_args=task_args,
@@ -99,6 +118,7 @@ async def process_uploaded_file_async(
             celery_task_id=celery_task_id,
         )
 
+        stage = "provider_initialization"
         llm_provider_factory = LLMProviderFactory(settings)
 
         generation_client = llm_provider_factory.create(
@@ -139,6 +159,7 @@ async def process_uploaded_file_async(
             db_client=db_client
         )
 
+        stage = "resource_validation"
         project = await project_model.get_project_by_id(
             tenant_id=tenant_uuid,
             project_id=project_id,
@@ -158,6 +179,52 @@ async def process_uploaded_file_async(
         if asset.asset_project_id != project.project_id:
             raise ValueError("asset_does_not_belong_to_project")
 
+        # Parse and chunk first. If the file is invalid, the previous
+        # successful index remains available.
+        stage = "file_parsing"
+        process_controller = ProcessController(
+            tenant_id=tenant_uuid,
+            project_id=project_id,
+        )
+        try:
+            file_content = process_controller.get_file_content(
+                file_id=file_id
+            )
+            file_content = await _maybe_await(file_content)
+        except Exception as exc:
+            raise RuntimeError(
+                f"document_parsing_failed: {exc}"
+            ) from exc
+        if not file_content:
+            raise RuntimeError(
+                "document_parsing_failed: no readable content was extracted"
+            )
+
+        stage = "file_chunking"
+        try:
+            file_chunks = process_controller.process_file_content(
+                file_content=file_content,
+                file_id=file_id,
+                chunk_size=chunk_size,
+                overlap_size=overlap_size,
+            )
+            file_chunks = await _maybe_await(file_chunks)
+        except Exception as exc:
+            raise RuntimeError(
+                f"document_chunking_failed: {exc}"
+            ) from exc
+
+        clean_file_chunks = [
+            chunk
+            for chunk in file_chunks
+            if chunk.page_content and chunk.page_content.strip()
+        ]
+        if not clean_file_chunks:
+            raise RuntimeError(
+                "document_chunking_failed: all generated chunks are empty"
+            )
+
+        stage = "asset_status_processing"
         await asset_model.mark_asset_processing(
             tenant_id=tenant_uuid,
             asset_id=asset_id,
@@ -170,65 +237,29 @@ async def process_uploaded_file_async(
             template_parser=template_parser,
         )
 
+        stage = "old_index_cleanup"
         old_chunks = await chunk_model.get_chunks_by_asset_id(
             tenant_id=tenant_uuid,
             asset_id=asset_id,
         )
-
         old_chunk_ids = [
             chunk.chunk_id
             for chunk in old_chunks
             if chunk.chunk_id is not None
         ]
-
         if old_chunk_ids:
-            vectors_deleted = (
-                await nlp_controller.delete_vectors_by_ids(
-                    project=project,
-                    record_ids=old_chunk_ids,
-                )
+            vectors_deleted = await nlp_controller.delete_vectors_by_ids(
+                project=project,
+                record_ids=old_chunk_ids,
             )
-
             if not vectors_deleted:
                 raise RuntimeError(
-                    "old_vectors_cleanup_failed"
+                    "old_index_cleanup_failed: vector deletion returned false"
                 )
-
             await chunk_model.delete_chunks_by_asset_id(
                 tenant_id=tenant_uuid,
                 asset_id=asset_id,
             )
-
-        process_controller = ProcessController(
-            tenant_id=tenant_uuid,
-            project_id=project_id,
-        )
-
-        file_content = process_controller.get_file_content(
-            file_id=file_id
-        )
-        file_content = await _maybe_await(file_content)
-
-        if not file_content:
-            raise RuntimeError("file_processing_failed")
-
-        file_chunks = process_controller.process_file_content(
-            file_content=file_content,
-            file_id=file_id,
-            chunk_size=chunk_size,
-            overlap_size=overlap_size,
-        )
-        file_chunks = await _maybe_await(file_chunks)
-
-        clean_file_chunks = [
-            chunk
-            for chunk in file_chunks
-            if chunk.page_content
-            and chunk.page_content.strip()
-        ]
-
-        if not clean_file_chunks:
-            raise RuntimeError("all_chunks_are_empty")
 
         file_chunk_records = [
             DataChunk(
@@ -247,6 +278,7 @@ async def process_uploaded_file_async(
             )
         ]
 
+        stage = "chunk_database_insert"
         inserted_chunks = await chunk_model.insert_many_chunks(
             tenant_id=tenant_uuid,
             chunks=file_chunk_records,
@@ -259,8 +291,12 @@ async def process_uploaded_file_async(
         ]
 
         if len(chunk_ids) != len(file_chunk_records):
-            raise RuntimeError("chunk_ids_not_generated")
+            raise RuntimeError(
+                "chunk_database_insert_failed: chunk IDs were not generated"
+            )
+        new_chunk_ids = list(chunk_ids)
 
+        stage = "vector_indexing"
         index_batch_size = 5
         indexed_chunks = 0
 
@@ -307,6 +343,7 @@ async def process_uploaded_file_async(
             "indexed_chunks": indexed_chunks,
         }
 
+        stage = "success_finalization"
         await asset_model.mark_asset_indexed(
             tenant_id=tenant_uuid,
             asset_id=asset_id,
@@ -318,12 +355,62 @@ async def process_uploaded_file_async(
             result=success_result,
         )
 
+        logger.info(
+            "File processing completed. tenant_id=%s project_id=%s "
+            "asset_id=%s indexed_chunks=%s",
+            tenant_uuid,
+            project_id,
+            asset_id,
+            indexed_chunks,
+        )
         return success_result
 
     except Exception as exc:
+        logger.exception(
+            "File processing failed. stage=%s tenant_id=%s "
+            "project_id=%s asset_id=%s file_id=%s task_id=%s",
+            stage,
+            tenant_uuid,
+            project_id,
+            asset_id,
+            file_id,
+            celery_task_id,
+        )
+
+        # Remove only data created by this failed run. The source file is
+        # intentionally kept so the user can reprocess it later.
+        if new_chunk_ids and chunk_model is not None:
+            logger.warning(
+                "Cleaning partial processing data. asset_id=%s chunks=%s",
+                asset_id,
+                len(new_chunk_ids),
+            )
+            if nlp_controller is not None and project is not None:
+                try:
+                    await nlp_controller.delete_vectors_by_ids(
+                        project=project,
+                        record_ids=new_chunk_ids,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Partial vector cleanup failed. asset_id=%s",
+                        asset_id,
+                    )
+            try:
+                await chunk_model.delete_chunks_by_asset_id(
+                    tenant_id=tenant_uuid,
+                    asset_id=asset_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Partial chunk cleanup failed. asset_id=%s",
+                    asset_id,
+                )
         failure_result = {
             "status": "failed",
             "tenant_id": str(tenant_uuid),
+            "stage": stage,
+            "error_type": type(exc).__name__,
             "error": str(exc),
             "project_id": project_id,
             "asset_id": asset_id,
@@ -338,7 +425,10 @@ async def process_uploaded_file_async(
                     error=str(exc),
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Failed to mark asset as failed. asset_id=%s",
+                    asset_id,
+                )
 
         if task_record is not None:
             try:
@@ -348,9 +438,14 @@ async def process_uploaded_file_async(
                     result=failure_result,
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Failed to mark task as failed. execution_id=%s",
+                    task_record.execution_id,
+                )
 
-        raise
+        raise RuntimeError(
+            f"file_processing_failed_at_{stage}: {exc}"
+        ) from exc
 
     finally:
         await db_engine.dispose()

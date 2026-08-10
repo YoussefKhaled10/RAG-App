@@ -13,6 +13,8 @@ from .role import (
     RoleListResponse,
     RoleResponse,
     RoleUpdate,
+    SystemRoleOption,
+    SystemRoleCatalogResponse
 )
 from .tenant import (
     TenantCreate,
@@ -48,7 +50,18 @@ from .search import (
     HybridSearchRequest,
     HybridSearchResponse,
     HybridSearchResult,
+    CitationInfo,
+    ConversationMessage
 )
+
+
+from .database_connection import (
+    DatabaseConnectionCreate,
+    DatabaseConnectionListResponse,
+    DatabaseConnectionResponse,
+    DatabaseConnectionUpdate
+)
+
 
 __all__ = [
     "AccessTokenPayload",
@@ -61,6 +74,8 @@ __all__ = [
     "RoleListResponse",
     "RoleResponse",
     "RoleUpdate",
+    "SystemRoleOption",
+    "SystemRoleCatalogResponse",
     "TenantCreate",
     "TenantListResponse",
     "TenantRegistrationRequest",
@@ -83,5 +98,11 @@ __all__ = [
     "AskResponse",
     "HybridSearchRequest",
     "HybridSearchResponse",
-    "HybridSearchResult"
+    "HybridSearchResult",
+    "CitationInfo",
+    "ConversationMessage",
+    "DatabaseConnectionCreate",
+    "DatabaseConnectionListResponse",
+    "DatabaseConnectionResponse",
+    "DatabaseConnectionUpdate"
 ]

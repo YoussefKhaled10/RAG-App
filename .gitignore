@@ -1,7 +1,10 @@
 # ==================================================
 # Secrets and environment variables
 # ==================================================
-
+New folder
+src/assets/files/
+*__pycache__
+تحميل ملف حالة المشروع الكامل.md
 .env
 .env.*
 !.env.example

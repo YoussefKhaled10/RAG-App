@@ -28,7 +28,8 @@ async def get_task_status(
     )
 
     task_record = await idempotency_manager.get_task_by_celery_id(
-        celery_task_id=task_id
+        celery_task_id=task_id,
+        tenant_id=tenant_id,
     )
 
     if task_record is None:
