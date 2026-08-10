@@ -30,4 +30,10 @@ vine==5.1.0
 email-validator==2.2.0
 pwdlib[argon2]
 PyJWT==2.10.1
+
+cryptography
+python-docx
+pandas
+openpyxl
+xlrd
 flower

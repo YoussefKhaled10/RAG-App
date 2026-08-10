@@ -12,6 +12,7 @@ from dependencies.auth import require_tenant_admin
 from models.RoleModel import RoleModel
 from models.UserModel import UserModel
 from models.UserRoleModel import UserRoleModel
+from models.enums.RoleEnum import RoleName
 from schemas.auth import CurrentUserResponse
 from schemas.role import RoleResponse
 from schemas.user_role import (
@@ -263,7 +264,7 @@ async def remove_role_from_user(
 
     if (
         role is not None
-        and role.role_name == "Tenant Admin"
+        and role.role_name == RoleName.TENANT_ADMIN.value
         and user is not None
         and user.is_tenant_admin
     ):

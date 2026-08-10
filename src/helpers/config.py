@@ -59,6 +59,20 @@ class Settings(BaseSettings):
     CELERY_TASK_TIME_LIMIT : int
     CELERY_WORKER_CONCURRENCY : int
     
+    RERANK_ENABLED : bool
+    RERANK_API_KEY : str
+    RERANK_MODEL_ID : str
+    RERANK_API_URL : str
+    RERANK_TIMEOUT_SECONDS : int
+    RERANK_MAX_DOCUMENTS : int
+    
+    QUERY_REWRITE_ENABLED : bool 
+    QUERY_REWRITE_MAX_HISTORY : int 
+    QUERY_REWRITE_MAX_CHARACTERS : int
+    QUERY_REWRITE_FALLBACK : bool
+    
+    DATABASE_CREDENTIALS_ENCRYPTION_KEY: str
+
     class Config:
         env_file = ".env"
 

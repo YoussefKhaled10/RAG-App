@@ -1,5 +1,4 @@
 from uuid import UUID
-
 from fastapi import (
     APIRouter,
     Depends,
@@ -8,16 +7,22 @@ from fastapi import (
     Request,
     status,
 )
-
 from dependencies.auth import require_tenant_admin
 from models.RoleModel import RoleModel
 from models.db_schemes import Role
+from models.enums.RoleEnum import (
+    ROLE_DESCRIPTIONS,
+    ROLE_PERMISSIONS,
+    RoleName,
+)
 from schemas.auth import CurrentUserResponse
 from schemas.role import (
     RoleCreate,
     RoleListResponse,
     RoleResponse,
     RoleUpdate,
+    SystemRoleCatalogResponse,
+    SystemRoleOption,
 )
 
 
@@ -55,12 +60,10 @@ async def create_role(
 ) -> RoleResponse:
     tenant_id = current_user.user.tenant_id
     role_model = await _get_role_model(request)
-
     existing_role = await role_model.get_role_by_name(
         tenant_id=tenant_id,
         role_name=role_data.role_name,
     )
-
     if existing_role is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -69,14 +72,12 @@ async def create_role(
                 "inside the tenant"
             ),
         )
-
     role_record = Role(
         tenant_id=tenant_id,
         role_name=role_data.role_name,
         role_description=role_data.role_description,
         is_system_role=False,
     )
-
     try:
         created_role = await role_model.create_role(
             role=role_record,
@@ -86,7 +87,6 @@ async def create_role(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
-
     return _to_role_response(created_role)
 
 
@@ -105,7 +105,6 @@ async def list_roles(
 ) -> RoleListResponse:
     tenant_id = current_user.user.tenant_id
     role_model = await _get_role_model(request)
-
     roles, total_roles, total_pages = (
         await role_model.get_tenant_roles(
             tenant_id=tenant_id,
@@ -114,7 +113,6 @@ async def list_roles(
             include_users=include_users,
         )
     )
-
     return RoleListResponse(
         items=[
             _to_role_response(role)
@@ -124,6 +122,48 @@ async def list_roles(
         page=page,
         page_size=page_size,
         total_pages=total_pages,
+    )
+
+
+@roles_router.get(
+    "/catalog",
+    response_model=SystemRoleCatalogResponse,
+)
+async def get_system_role_catalog(
+    request: Request,
+    current_user: CurrentUserResponse = Depends(
+        require_tenant_admin
+    ),
+) -> SystemRoleCatalogResponse:
+    tenant_id = current_user.user.tenant_id
+    role_model = await _get_role_model(request)
+    roles, _, _ = await role_model.get_tenant_roles(
+        tenant_id=tenant_id,
+        page=1,
+        page_size=100,
+        include_users=False,
+    )
+    roles_by_name = {
+        role.role_name: role
+        for role in roles
+        if role.is_system_role
+    }
+    items: list[SystemRoleOption] = []
+    for role_name in RoleName:
+        role = roles_by_name.get(role_name.value)
+        if role is None:
+            continue
+        items.append(
+            SystemRoleOption(
+                role_id=role.role_id,
+                role_name=role_name.value,
+                description=ROLE_DESCRIPTIONS[role_name],
+                permissions=ROLE_PERMISSIONS[role_name],
+            )
+        )
+    return SystemRoleCatalogResponse(
+        items=items,
+        total=len(items),
     )
 
 
@@ -141,19 +181,16 @@ async def get_role(
 ) -> RoleResponse:
     tenant_id = current_user.user.tenant_id
     role_model = await _get_role_model(request)
-
     role = await role_model.get_role_by_id(
         tenant_id=tenant_id,
         role_id=role_id,
         include_users=include_users,
     )
-
     if role is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="role not found",
         )
-
     return _to_role_response(role)
 
 
@@ -171,36 +208,29 @@ async def update_role(
 ) -> RoleResponse:
     tenant_id = current_user.user.tenant_id
     role_model = await _get_role_model(request)
-
     update_data = role_data.model_dump(
         exclude_unset=True,
     )
-
     if not update_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="at least one field must be provided",
         )
-
     existing_role = await role_model.get_role_by_id(
         tenant_id=tenant_id,
         role_id=role_id,
     )
-
     if existing_role is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="role not found",
         )
-
     if existing_role.is_system_role:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="system roles cannot be modified",
         )
-
     new_role_name = update_data.get("role_name")
-
     if (
         new_role_name is not None
         and new_role_name != existing_role.role_name
@@ -211,7 +241,6 @@ async def update_role(
                 role_name=new_role_name,
             )
         )
-
         if role_with_same_name is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -220,7 +249,6 @@ async def update_role(
                     "inside the tenant"
                 ),
             )
-
     try:
         updated_role = await role_model.update_role(
             tenant_id=tenant_id,
@@ -235,13 +263,11 @@ async def update_role(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
-
     if updated_role is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="role not found",
         )
-
     return _to_role_response(updated_role)
 
 
@@ -258,7 +284,6 @@ async def delete_role(
 ) -> None:
     tenant_id = current_user.user.tenant_id
     role_model = await _get_role_model(request)
-
     try:
         deleted = await role_model.delete_role(
             tenant_id=tenant_id,
@@ -269,7 +294,6 @@ async def delete_role(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

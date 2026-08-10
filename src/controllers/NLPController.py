@@ -6,6 +6,7 @@ from typing import Any
 
 from models.db_schemes import DataChunk, Project
 from stores.llm.LLMEnums import DocumentTypeEnum
+from utils.conversation import local_conversation_response
 
 from .BaseController import BaseController
 
@@ -369,6 +370,9 @@ class NLPController(BaseController):
         clean_query = str(query).strip()
         if not clean_query:
             return None, None, None
+        local_response = local_conversation_response(clean_query)
+        if local_response is not None:
+            return local_response, None, None
 
         retrieved_documents = (
             await self.search_vector_db_collection(
@@ -501,6 +505,9 @@ class NLPController(BaseController):
         semantic_limit: int = 20,
         rrf_k: int = 60,
     ) -> list[dict]:
+        local_response = local_conversation_response(query)
+        if local_response is not None:
+            return []
         semantic_results = await self.search_vector_db_collection(
             project=project,
             text=query,
@@ -517,11 +524,27 @@ class NLPController(BaseController):
         self,
         question: str,
         results: list[dict],
+        conversation_history: list | None = None,
     ) -> str:
-        if not results:
-            raise ValueError("hybrid search returned no results")
+        local_response = local_conversation_response(
+            question
+        )
 
-        system_prompt = self.template_parser.get("rag", "system_prompt")
+        if local_response is not None:
+            return local_response
+
+        if not results:
+            raise ValueError(
+                "hybrid search returned no results"
+            )
+
+        clean_question = str(question).strip()
+
+        system_prompt = self.template_parser.get(
+            "rag",
+            "system_prompt",
+        )
+
         document_blocks = [
             self.template_parser.get(
                 "rag",
@@ -531,21 +554,124 @@ class NLPController(BaseController):
                     "chunk_text": item["text"],
                 },
             )
-            for index, item in enumerate(results, start=1)
+            for index, item in enumerate(
+                results,
+                start=1,
+            )
         ]
+
         footer_prompt = self.template_parser.get(
-            "rag", "footer_prompt", {"query": question}
+            "rag",
+            "footer_prompt",
+            {
+                "query": clean_question,
+            },
         )
+
         chat_history = [
             self.generation_client.construct_prompt(
                 prompt=system_prompt,
-                role=self.generation_client.enums.SYSTEM.value,
+                role=(
+                    self.generation_client
+                    .enums
+                    .SYSTEM
+                    .value
+                ),
             )
         ]
-        answer = self.generation_client.generate_text(
-            prompt="\n\n".join([*document_blocks, footer_prompt]),
-            chat_history=chat_history,
+
+        clean_conversation_history = []
+
+        for raw_message in (
+            conversation_history or []
+        )[-6:]:
+            if hasattr(raw_message, "model_dump"):
+                message = raw_message.model_dump()
+            elif isinstance(raw_message, dict):
+                message = raw_message
+            else:
+                continue
+
+            role = str(
+                message.get("role", "")
+            ).strip().lower()
+
+            content = str(
+                message.get("content", "")
+            ).strip()
+
+            if (
+                role not in {"user", "assistant"}
+                or not content
+            ):
+                continue
+
+            clean_conversation_history.append(
+                {
+                    "role": role,
+                    "content": content[:4000],
+                }
+            )
+
+        user_role = getattr(
+            self.generation_client.enums,
+            "USER",
+            None,
         )
+
+        assistant_role = getattr(
+            self.generation_client.enums,
+            "ASSISTANT",
+            None,
+        )
+
+        if assistant_role is None:
+            assistant_role = getattr(
+                self.generation_client.enums,
+                "MODEL",
+                None,
+            )
+
+        for message in clean_conversation_history:
+            role_enum = (
+                user_role
+                if message["role"] == "user"
+                else assistant_role
+            )
+
+            if role_enum is None:
+                continue
+
+            role_value = getattr(
+                role_enum,
+                "value",
+                role_enum,
+            )
+
+            chat_history.append(
+                self.generation_client.construct_prompt(
+                    prompt=message["content"],
+                    role=role_value,
+                )
+            )
+
+        generation_prompt = "\n\n".join(
+            [
+                *document_blocks,
+                footer_prompt,
+            ]
+        )
+
+        answer = (
+            self.generation_client.generate_text(
+                prompt=generation_prompt,
+                chat_history=chat_history,
+            )
+        )
+
         if not answer:
-            raise RuntimeError("generation provider returned no answer")
-        return answer
+            raise RuntimeError(
+                "generation provider returned no answer"
+            )
+
+        return str(answer).strip()
