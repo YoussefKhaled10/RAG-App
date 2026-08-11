@@ -12,7 +12,8 @@ API_URL = os.getenv("RAG_API_URL", "http://127.0.0.1:8000").rstrip("/")
 REQUEST_TIMEOUT = 60
 
 st.set_page_config(
-    page_title="RAG AI",
+    page_title="NexaDocs AI",
+    page_icon="✦",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -20,139 +21,253 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
 
 :root {
-  --navy: #0b172a;
-  --blue: #2563eb;
-  --cyan: #06b6d4;
+  --ink: #111827;
+  --navy: #07111f;
+  --panel: #0d1b2e;
+  --primary: #6d5dfc;
+  --primary-dark: #5546ea;
+  --cyan: #19c7d8;
   --surface: #ffffff;
-  --soft: #f4f7fb;
-  --line: #dce4ef;
-  --muted: #64748b;
-  --text: #162033;
-  --ok: #059669;
+  --soft: #f5f7fb;
+  --line: #e5e9f2;
+  --muted: #667085;
+  --success: #079669;
+  --danger: #dc3545;
+  --warning: #d97706;
+  --shadow-sm: 0 8px 24px rgba(16, 24, 40, .055);
+  --shadow-lg: 0 24px 70px rgba(16, 24, 40, .13);
 }
 
-html, body, [class*="css"] {font-family: 'Inter', sans-serif;}
-.stApp {background: linear-gradient(180deg, #f8fbff 0%, #f3f6fb 100%); color: var(--text);}
-.block-container {max-width: 1220px; padding-top: 1.35rem; padding-bottom: 5rem;}
-[data-testid="stSidebar"] {background: linear-gradient(180deg, #0b172a 0%, #12233d 100%); border-right: 0;}
-[data-testid="stSidebar"] * {color: #eef5ff;}
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {color: #c9d6e8;}
-[data-testid="stSidebar"] hr {border-color: rgba(255,255,255,.12);}
+html, body, [class*="css"] {font-family: 'Manrope', sans-serif;}
+html {scroll-behavior:smooth;}
+.stApp {
+  color:var(--ink);
+  background:
+    radial-gradient(circle at 78% -10%, rgba(109,93,252,.10), transparent 27%),
+    radial-gradient(circle at 15% 45%, rgba(25,199,216,.055), transparent 23%),
+    #f7f8fc;
+}
+.block-container {max-width:1320px; padding:1.55rem 2.2rem 5rem;}
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+  background:
+    radial-gradient(circle at 10% 0%, rgba(109,93,252,.28), transparent 27%),
+    linear-gradient(180deg, #081321 0%, #0b1728 55%, #07111f 100%);
+  border-right:1px solid rgba(255,255,255,.055);
+}
+[data-testid="stSidebar"] > div:first-child {padding-top:1.2rem;}
+[data-testid="stSidebar"] * {color:#edf3fc;}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {color:#afbdd0;}
+[data-testid="stSidebar"] hr {border-color:rgba(255,255,255,.09); margin:.7rem 0;}
+[data-testid="stSidebar"] [role="radiogroup"] {gap:.28rem;}
 [data-testid="stSidebar"] [role="radiogroup"] label {
-  padding: .58rem .7rem; border-radius: 10px; margin-bottom: .16rem;
+  padding:.62rem .72rem;
+  border:1px solid transparent;
+  border-radius:12px;
+  min-height:2.7rem;
+  transition:all .18s ease;
 }
-[data-testid="stSidebar"] [role="radiogroup"] label:hover {background: rgba(255,255,255,.08);}
-[data-testid="stSidebar"] .stButton button {border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.07); color: white;}
-[data-testid="stSidebar"] .stTextInput input {background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.15);}
-
-.brand {display:flex; align-items:center; gap:.8rem; margin:.1rem 0 1.15rem;}
-.brand-mark {width:42px; height:42px; border-radius:12px; display:grid; place-items:center; background:linear-gradient(135deg,#2563eb,#06b6d4); box-shadow:0 10px 25px rgba(6,182,212,.25); font-size:1.25rem;}
-.brand-name {font-size:1.04rem; font-weight:800; color:#fff; line-height:1.1;}
-.brand-sub {font-size:.72rem; color:#91a7c4; margin-top:.2rem;}
-.workspace-card {padding:.8rem; border:1px solid rgba(255,255,255,.12); border-radius:12px; background:rgba(255,255,255,.05); margin-bottom:.7rem;}
-.workspace-kicker {font-size:.65rem; text-transform:uppercase; letter-spacing:.12em; color:#91a7c4;}
-.workspace-name {font-weight:700; margin-top:.2rem; color:#fff;}
-.workspace-meta {font-size:.74rem; color:#b6c5d9; margin-top:.18rem;}
-
-.page-header {display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; margin-bottom:1.15rem;}
-.page-title {font-size:1.75rem; font-weight:800; color:var(--navy); letter-spacing:-.03em;}
-.page-subtitle {color:var(--muted); margin-top:.25rem; font-size:.92rem;}
-.badge {display:inline-flex; align-items:center; gap:.35rem; padding:.35rem .62rem; border-radius:999px; background:#e8f7ef; color:#057a55; font-size:.72rem; font-weight:700;}
-
-.hero {padding:1.2rem 1.3rem; border-radius:18px; background:radial-gradient(circle at 90% 10%,rgba(6,182,212,.35),transparent 35%),linear-gradient(135deg,#0b172a,#1e3a62); color:white; box-shadow:0 18px 45px rgba(11,23,42,.16); margin-bottom:1.1rem;}
-.hero h2 {margin:0; font-size:1.35rem; color:white;}
-.hero p {margin:.35rem 0 0; color:#c9d8ec; font-size:.9rem; max-width:750px;}
-
-.card {background:#fff; border:1px solid var(--line); border-radius:15px; padding:1rem 1.05rem; box-shadow:0 7px 28px rgba(15,23,42,.05);}
-.metric-card {background:#fff; border:1px solid var(--line); border-radius:15px; padding:1rem; box-shadow:0 7px 28px rgba(15,23,42,.045);}
-.metric-label {font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.08em;}
-.metric-value {font-size:1.55rem; font-weight:800; color:var(--navy); margin-top:.25rem;}
-.metric-note {font-size:.74rem; color:var(--muted); margin-top:.15rem;}
-
-[data-testid="stForm"] {background:#fff; border:1px solid var(--line); border-radius:15px; padding:1rem;}
-.stButton button {border-radius:10px; font-weight:700; min-height:2.6rem;}
-.stButton button[kind="primary"] {background:linear-gradient(135deg,#2563eb,#1d4ed8); border:0;}
-.stTextInput input, .stTextArea textarea, .stSelectbox [data-baseweb="select"] {border-radius:10px;}
-[data-testid="stExpander"] {background:#fff; border:1px solid var(--line); border-radius:13px; overflow:hidden;}
-
-.chat-shell {background:#fff; border:1px solid var(--line); border-radius:18px; padding:.4rem 1rem 1rem; box-shadow:0 12px 38px rgba(15,23,42,.06);}
-[data-testid="stChatMessage"] {border:1px solid #e5ebf3; border-radius:15px; padding:.7rem .8rem; background:#fff; margin:.55rem 0;}
-[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {background:#f0f6ff; border-color:#d7e6ff;}
-[data-testid="stChatInput"] {border-radius:14px; box-shadow:0 10px 30px rgba(15,23,42,.08);}
-.citation-card {display:flex; gap:.65rem; align-items:flex-start; padding:.65rem .75rem; margin:.4rem 0; border:1px solid #dce6f1; border-radius:11px; background:#f8fbff;}
-.citation-icon {width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:#e2efff;}
-.citation-name {font-weight:700;color:#18324f;font-size:.85rem;}
-.citation-meta {font-size:.75rem;color:#66788c;margin-top:.1rem;}
-.file-status {display:inline-block;padding:.2rem .5rem;border-radius:999px;background:#e8f7ef;color:#057a55;font-size:.7rem;font-weight:700;}
-.small-muted {font-size:.76rem;color:var(--muted);}
-
-
-.account-profile {
-  display:flex; align-items:center; gap:1rem; padding:1.15rem;
-  background:linear-gradient(135deg,#0b172a,#1f406b); color:white;
-  border-radius:16px; box-shadow:0 14px 38px rgba(15,23,42,.14);
-  margin-bottom:1rem;
+[data-testid="stSidebar"] [role="radiogroup"] label:hover {
+  background:rgba(255,255,255,.065);
+  border-color:rgba(255,255,255,.06);
+  transform:translateX(2px);
 }
-.account-avatar {
-  width:54px; height:54px; border-radius:15px; display:grid;
-  place-items:center; font-size:1.35rem; font-weight:800;
-  background:linear-gradient(135deg,#2563eb,#06b6d4);
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) {
+  background:linear-gradient(90deg, rgba(109,93,252,.30), rgba(109,93,252,.12));
+  border-color:rgba(148,134,255,.33);
+  box-shadow:inset 3px 0 0 #8b7dff;
 }
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+  color:#7f90a8; font-size:.68rem; font-weight:800; letter-spacing:.09em; text-transform:uppercase;
+}
+[data-testid="stSidebar"] .stButton button {
+  border:1px solid rgba(255,255,255,.13);
+  background:rgba(255,255,255,.055);
+  color:#fff;
+  box-shadow:none;
+}
+[data-testid="stSidebar"] .stButton button:hover {background:rgba(255,255,255,.1); border-color:rgba(255,255,255,.22);}
+[data-testid="stSidebar"] .stTextInput input {
+  background:rgba(255,255,255,.055);
+  color:#fff;
+  border-color:rgba(255,255,255,.12);
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] {background:rgba(255,255,255,.04); border-color:rgba(255,255,255,.09); box-shadow:none;}
+[data-testid="stSidebar"] [data-testid="stExpander"] details summary:hover {background:rgba(255,255,255,.055);}
+
+.brand {display:flex; align-items:center; gap:.78rem; margin:.1rem 0 1.15rem; padding:.25rem .1rem;}
+.brand-mark {
+  width:44px; height:44px; border-radius:14px; display:grid; place-items:center;
+  background:linear-gradient(145deg,#8b7dff 0%,#6d5dfc 45%,#19c7d8 120%);
+  box-shadow:0 12px 30px rgba(109,93,252,.35), inset 0 1px 0 rgba(255,255,255,.35);
+  position:relative;
+}
+.brand-mark:before {content:'✦'; font-size:1.18rem; color:white; filter:drop-shadow(0 2px 5px rgba(0,0,0,.2));}
+.brand-name {font-family:'Space Grotesk',sans-serif; font-size:1.08rem; font-weight:700; color:#fff; line-height:1.1; letter-spacing:-.02em;}
+.brand-sub {font-size:.67rem; color:#8294ae; margin-top:.23rem; letter-spacing:.055em; text-transform:uppercase;}
+.workspace-card {
+  padding:.9rem; border:1px solid rgba(255,255,255,.09); border-radius:14px;
+  background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(255,255,255,.025));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04); margin-bottom:.95rem;
+}
+.workspace-kicker {font-size:.61rem; text-transform:uppercase; letter-spacing:.13em; color:#7589a5; font-weight:800;}
+.workspace-name {font-weight:800; margin-top:.32rem; color:#fff; font-size:.89rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.workspace-meta {font-size:.7rem; color:#9fb0c7; margin-top:.22rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+
+/* Page structure */
+.page-header {display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; margin:.25rem 0 1.35rem;}
+.page-eyebrow {font-size:.67rem; font-weight:800; color:var(--primary); letter-spacing:.13em; text-transform:uppercase; margin-bottom:.3rem;}
+.page-title {font-family:'Space Grotesk',sans-serif; font-size:2rem; font-weight:700; color:var(--navy); letter-spacing:-.045em; line-height:1.12;}
+.page-subtitle {color:var(--muted); margin-top:.38rem; font-size:.9rem; max-width:780px; line-height:1.55;}
+.badge {
+  display:inline-flex; align-items:center; gap:.42rem; padding:.42rem .72rem; border-radius:999px;
+  background:#ecfdf5; color:#067857; border:1px solid #c8f1df; font-size:.7rem; font-weight:800;
+  box-shadow:0 4px 12px rgba(7,150,105,.08); white-space:nowrap;
+}
+.badge:before {content:''; width:7px; height:7px; background:#12b981; border-radius:50%; box-shadow:0 0 0 4px rgba(18,185,129,.12);}
+
+.hero {
+  position:relative; overflow:hidden; padding:1.5rem 1.65rem; border-radius:22px;
+  background:
+    radial-gradient(circle at 88% 12%,rgba(25,199,216,.33),transparent 25%),
+    radial-gradient(circle at 70% 130%,rgba(109,93,252,.48),transparent 40%),
+    linear-gradient(135deg,#07111f 0%,#102441 58%,#142d4d 100%);
+  color:white; box-shadow:0 22px 52px rgba(7,17,31,.17); margin-bottom:1.25rem;
+  border:1px solid rgba(255,255,255,.08);
+}
+.hero:after {content:''; position:absolute; width:220px; height:220px; border:1px solid rgba(255,255,255,.08); border-radius:50%; right:-75px; top:-100px; box-shadow:0 0 0 34px rgba(255,255,255,.025),0 0 0 70px rgba(255,255,255,.018);}
+.hero h2 {font-family:'Space Grotesk',sans-serif; margin:0; font-size:1.48rem; color:#fff; letter-spacing:-.03em; position:relative; z-index:1;}
+.hero p {margin:.45rem 0 0; color:#b9cae0; font-size:.86rem; max-width:760px; line-height:1.6; position:relative; z-index:1;}
+.hero-kicker {font-size:.64rem; font-weight:800; text-transform:uppercase; letter-spacing:.12em; color:#80e8f2; margin-bottom:.45rem; position:relative; z-index:1;}
+
+.section-heading {display:flex; align-items:center; justify-content:space-between; gap:1rem; margin:1.5rem 0 .75rem;}
+.section-title {font-family:'Space Grotesk',sans-serif; font-size:1.02rem; font-weight:700; color:var(--navy);}
+.section-meta {font-size:.72rem; color:var(--muted);}
+.card {
+  background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:17px;
+  padding:1.05rem 1.1rem; box-shadow:var(--shadow-sm); transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
+}
+.card:hover {transform:translateY(-2px); box-shadow:0 14px 36px rgba(16,24,40,.085); border-color:#d9d5ff;}
+.project-card {display:flex; align-items:center; gap:.85rem;}
+.project-icon {width:42px; height:42px; flex:0 0 42px; display:grid; place-items:center; border-radius:13px; background:linear-gradient(145deg,#eeeaff,#e8f9fb); color:var(--primary); font-size:1.05rem;}
+.project-name {font-weight:800; color:#182033; font-size:.9rem;}
+.small-muted {font-size:.73rem; line-height:1.5; color:var(--muted); margin-top:.18rem;}
+
+.metric-card {
+  position:relative; overflow:hidden; min-height:128px; background:rgba(255,255,255,.93);
+  border:1px solid var(--line); border-radius:18px; padding:1.08rem 1.12rem;
+  box-shadow:var(--shadow-sm); transition:transform .18s ease,box-shadow .18s ease;
+}
+.metric-card:hover {transform:translateY(-3px); box-shadow:0 16px 38px rgba(16,24,40,.09);}
+.metric-card:after {content:''; position:absolute; width:70px; height:70px; border-radius:50%; right:-27px; top:-27px; background:rgba(109,93,252,.08);}
+.metric-top {display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
+.metric-icon {width:34px; height:34px; display:grid; place-items:center; border-radius:10px; background:#f0edff; color:var(--primary); font-size:.9rem;}
+.metric-label {font-size:.65rem; color:#7b8495; text-transform:uppercase; letter-spacing:.09em; font-weight:800;}
+.metric-value {font-family:'Space Grotesk',sans-serif; font-size:1.65rem; line-height:1; font-weight:700; color:var(--navy); margin-top:.72rem; letter-spacing:-.035em;}
+.metric-note {font-size:.69rem; color:var(--muted); margin-top:.32rem;}
+
+/* Forms and native widgets */
+[data-testid="stForm"] {background:rgba(255,255,255,.94); border:1px solid var(--line); border-radius:18px; padding:1.15rem; box-shadow:var(--shadow-sm);}
+.stButton button {
+  border-radius:11px; font-weight:800; min-height:2.65rem; border:1px solid #dbe0eb;
+  box-shadow:0 4px 12px rgba(16,24,40,.045); transition:all .16s ease;
+}
+.stButton button:hover {border-color:#bdb5ff; color:var(--primary-dark); transform:translateY(-1px); box-shadow:0 8px 18px rgba(16,24,40,.08);}
+.stButton button[kind="primary"], [data-testid="stFormSubmitButton"] button[kind="primary"] {
+  color:#fff; background:linear-gradient(135deg,#7767ff,#5c4bec); border:0;
+  box-shadow:0 9px 24px rgba(109,93,252,.23);
+}
+.stButton button[kind="primary"]:hover, [data-testid="stFormSubmitButton"] button[kind="primary"]:hover {color:#fff; box-shadow:0 13px 28px rgba(109,93,252,.31);}
+.stTextInput input, .stTextArea textarea, .stNumberInput input, .stSelectbox [data-baseweb="select"] {
+  border-radius:11px; border-color:#dfe3ec; background:#fff; transition:border-color .15s ease,box-shadow .15s ease;
+}
+.stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {border-color:#8f82ff; box-shadow:0 0 0 3px rgba(109,93,252,.11);}
+[data-testid="stFileUploader"] {padding:1.25rem; border:1px dashed #bcb4ff; border-radius:17px; background:linear-gradient(145deg,#fbfaff,#f7fbff);}
+[data-testid="stFileUploaderDropzone"] {background:transparent; border:0;}
+[data-testid="stExpander"] {background:rgba(255,255,255,.94); border:1px solid var(--line); border-radius:15px; overflow:hidden; box-shadow:0 5px 18px rgba(16,24,40,.035);}
+[data-testid="stExpander"] details summary:hover {background:#fafaff;}
+[data-testid="stMetric"] {background:#fff; border:1px solid var(--line); border-radius:14px; padding:.85rem .95rem; box-shadow:0 5px 18px rgba(16,24,40,.035);}
+[data-testid="stMetricValue"] {font-family:'Space Grotesk',sans-serif; color:var(--navy);}
+[data-testid="stTabs"] [data-baseweb="tab-list"] {gap:.3rem; background:#f1f3f8; border-radius:12px; padding:.3rem;}
+[data-testid="stTabs"] [data-baseweb="tab"] {border-radius:9px; padding:.45rem .8rem;}
+[data-testid="stTabs"] [aria-selected="true"] {background:#fff; box-shadow:0 3px 12px rgba(16,24,40,.08); color:var(--primary);}
+[data-testid="stAlert"] {border-radius:14px; border-width:1px;}
+
+/* Authentication */
+.auth-visual {
+  min-height:625px; position:relative; overflow:hidden; padding:2.35rem; border-radius:26px;
+  background:
+    radial-gradient(circle at 82% 15%,rgba(25,199,216,.37),transparent 27%),
+    radial-gradient(circle at 40% 110%,rgba(109,93,252,.64),transparent 44%),
+    linear-gradient(145deg,#07111f,#112a49);
+  color:white; box-shadow:var(--shadow-lg); border:1px solid rgba(255,255,255,.08);
+}
+.auth-logo {display:inline-flex; align-items:center; gap:.65rem; font-family:'Space Grotesk',sans-serif; font-size:.95rem; font-weight:700;}
+.auth-logo-mark {width:34px; height:34px; display:grid; place-items:center; border-radius:11px; background:linear-gradient(145deg,#8b7dff,#19c7d8);}
+.auth-headline {font-family:'Space Grotesk',sans-serif; font-size:2.65rem; line-height:1.08; letter-spacing:-.055em; margin-top:4.7rem; max-width:480px;}
+.auth-copy {color:#b7c8dd; font-size:.9rem; line-height:1.7; max-width:480px; margin-top:1rem;}
+.auth-feature {display:flex; align-items:flex-start; gap:.7rem; margin-top:1rem; color:#d8e3f1; font-size:.79rem;}
+.auth-feature-icon {width:27px; height:27px; flex:0 0 27px; display:grid; place-items:center; border-radius:8px; background:rgba(255,255,255,.09); color:#82eef5;}
+.auth-proof {position:absolute; left:2.35rem; right:2.35rem; bottom:2rem; display:flex; justify-content:space-between; gap:.7rem; color:#8397b1; font-size:.67rem; text-transform:uppercase; letter-spacing:.09em;}
+.auth-panel {padding:1.25rem .7rem 0;}
+.auth-panel-kicker {font-size:.68rem; color:var(--primary); font-weight:800; letter-spacing:.12em; text-transform:uppercase;}
+.auth-panel-title {font-family:'Space Grotesk',sans-serif; font-size:1.8rem; color:var(--navy); letter-spacing:-.04em; margin:.35rem 0 .2rem;}
+.auth-panel-copy {font-size:.82rem; color:var(--muted); margin-bottom:1.2rem;}
+
+/* Chat */
+.chat-shell {background:rgba(255,255,255,.95); border:1px solid var(--line); border-radius:21px; padding:.55rem 1.05rem 1.1rem; box-shadow:0 15px 44px rgba(16,24,40,.07);}
+[data-testid="stChatMessage"] {border:1px solid #e7eaf2; border-radius:17px; padding:.78rem .9rem; background:#fff; margin:.62rem 0; box-shadow:0 4px 15px rgba(16,24,40,.035);}
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {background:linear-gradient(145deg,#f4f1ff,#f7f9ff); border-color:#ddd7ff;}
+[data-testid="stChatMessage"] [data-testid="stChatMessageAvatarUser"] {background:#6d5dfc;}
+[data-testid="stChatInput"] {border-radius:15px; border-color:#dcd7ff; box-shadow:0 12px 34px rgba(16,24,40,.09);}
+.citation-card {display:flex; gap:.7rem; align-items:flex-start; padding:.7rem .78rem; margin:.45rem 0; border:1px solid #e2e5ee; border-radius:12px; background:linear-gradient(145deg,#fafaff,#f7fbff);}
+.citation-icon {width:32px;height:32px;flex:0 0 32px;border-radius:9px;display:grid;place-items:center;background:#ebe8ff;color:var(--primary);}
+.citation-name {font-weight:800;color:#26344a;font-size:.82rem;}
+.citation-meta {font-size:.71rem;color:#6f7b8d;margin-top:.12rem;}
+.file-status {display:inline-block;padding:.22rem .55rem;border-radius:999px;background:#ecfdf5;color:#067857;font-size:.68rem;font-weight:800;}
+
+/* Details, account and API */
+.account-profile {display:flex; align-items:center; gap:1rem; padding:1.35rem; background:linear-gradient(135deg,#07111f,#163656); color:white; border-radius:20px; box-shadow:0 17px 45px rgba(7,17,31,.16); margin-bottom:1rem;}
+.account-avatar {width:58px; height:58px; border-radius:17px; display:grid; place-items:center; font-family:'Space Grotesk',sans-serif; font-size:1.35rem; font-weight:700; background:linear-gradient(135deg,#806fff,#19c7d8); box-shadow:0 10px 26px rgba(109,93,252,.28);}
 .account-name {font-size:1.08rem; font-weight:800; color:white;}
-.account-email {font-size:.8rem; color:#c8d8eb; margin-top:.18rem;}
-.detail-grid {
-  display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:.8rem; margin-top:.8rem;
-}
-.detail-card {
-  padding:.9rem 1rem; background:white; border:1px solid #dce4ef;
-  border-radius:13px; box-shadow:0 6px 22px rgba(15,23,42,.04);
-}
-.detail-label {
-  color:#64748b; font-size:.68rem; font-weight:700;
-  text-transform:uppercase; letter-spacing:.08em;
-}
-.detail-value {color:#162033; font-size:.94rem; font-weight:700; margin-top:.28rem;}
-.status-pill {
-  display:inline-flex; padding:.22rem .55rem; border-radius:999px;
-  background:#e8f7ef; color:#057a55; font-size:.74rem; font-weight:800;
-}
-.role-pill {
-  display:inline-flex; padding:.25rem .55rem; margin:.15rem .22rem .15rem 0;
-  border-radius:999px; background:#eaf2ff; color:#1d4ed8;
-  font-size:.72rem; font-weight:700;
-}
-@media (max-width: 720px) {.detail-grid {grid-template-columns:1fr;}}
+.account-email {font-size:.78rem; color:#b9c9dc; margin-top:.2rem;}
+.detail-grid {display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.8rem; margin-top:.8rem;}
+.detail-card {padding:.95rem 1rem; background:rgba(255,255,255,.95); border:1px solid var(--line); border-radius:14px; box-shadow:0 6px 22px rgba(16,24,40,.04);}
+.detail-label {color:#7c8493; font-size:.64rem; font-weight:800; text-transform:uppercase; letter-spacing:.09em;}
+.detail-value {color:#192235; font-size:.91rem; font-weight:750; margin-top:.3rem; word-break:break-word;}
+.status-pill {display:inline-flex; padding:.23rem .57rem; border-radius:999px; background:#ecfdf5; color:#067857; font-size:.7rem; font-weight:800;}
+.role-pill {display:inline-flex; padding:.27rem .6rem; margin:.16rem .24rem .16rem 0; border:1px solid #ddd8ff; border-radius:999px; background:#f2f0ff; color:#5c4bec; font-size:.69rem; font-weight:800;}
+.api-summary {display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.92rem 1rem; margin:.5rem 0; border:1px solid var(--line); border-radius:14px; background:rgba(255,255,255,.94); box-shadow:0 5px 18px rgba(16,24,40,.035); transition:transform .15s ease,border-color .15s ease;}
+.api-summary:hover {transform:translateX(3px); border-color:#d8d2ff;}
+.api-method {display:inline-flex; min-width:60px; justify-content:center; padding:.27rem .5rem; border-radius:8px; color:white; font-size:.65rem; font-weight:800; letter-spacing:.04em;}
+.api-get {background:#079669;}.api-post {background:#6657eb;}.api-patch {background:#d97706;}.api-put {background:#7c3aed;}.api-delete {background:#dc3545;}
+.api-path {font-family:'Space Grotesk',monospace; color:#192235; font-size:.8rem; font-weight:700; word-break:break-all;}
+.api-description {color:#6e788a; font-size:.72rem; margin-top:.16rem;}
+.api-count {display:inline-flex; padding:.27rem .58rem; border-radius:999px; background:#f0eeff; color:#5b4bec; font-size:.69rem; font-weight:800;}
 
-
-.api-summary {
-  display:flex; align-items:center; justify-content:space-between;
-  gap:1rem; padding:.85rem 1rem; margin:.45rem 0;
-  border:1px solid #dce4ef; border-radius:12px; background:#fff;
-  box-shadow:0 5px 18px rgba(15,23,42,.035);
-}
-.api-method {
-  display:inline-flex; min-width:58px; justify-content:center;
-  padding:.25rem .48rem; border-radius:7px; color:white;
-  font-size:.68rem; font-weight:800; letter-spacing:.04em;
-}
-.api-get {background:#059669;}
-.api-post {background:#2563eb;}
-.api-patch {background:#d97706;}
-.api-put {background:#7c3aed;}
-.api-delete {background:#dc2626;}
-.api-path {font-family:monospace; color:#162033; font-size:.82rem; font-weight:700;}
-.api-description {color:#64748b; font-size:.76rem; margin-top:.14rem;}
-.api-count {
-  display:inline-flex; padding:.25rem .55rem; border-radius:999px;
-  background:#eaf2ff; color:#1d4ed8; font-size:.72rem; font-weight:800;
-}
-
-#MainMenu, footer {visibility:hidden;}
+#MainMenu, footer, [data-testid="stToolbar"] {visibility:hidden;}
 header[data-testid="stHeader"] {background:transparent;}
+[data-testid="stDecoration"] {background:linear-gradient(90deg,#6d5dfc,#19c7d8); height:2px;}
+
+@media (max-width: 900px) {
+  .block-container {padding:1.2rem 1.15rem 4rem;}
+  .auth-visual {min-height:430px; padding:1.6rem;}
+  .auth-headline {font-size:2rem; margin-top:2.8rem;}
+  .auth-proof {left:1.6rem; right:1.6rem;}
+}
+@media (max-width: 720px) {
+  .page-header {align-items:flex-start; flex-direction:column;}
+  .page-title {font-size:1.65rem;}
+  .detail-grid {grid-template-columns:1fr;}
+  .hero {padding:1.25rem; border-radius:18px;}
+  .metric-card {min-height:116px;}
+  .auth-visual {min-height:390px;}
+  .auth-headline {font-size:1.7rem;}
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -401,23 +516,47 @@ def can_manage_files() -> bool:
 
 
 def page_header(title: str, subtitle: str, badge: str | None = None) -> None:
-    badge_html = f'<span class="badge">● {escape(badge)}</span>' if badge else ""
+    badge_html = f'<span class="badge">{escape(badge)}</span>' if badge else ""
     st.markdown(
-        f'<div class="page-header"><div><div class="page-title">{escape(title)}</div><div class="page-subtitle">{escape(subtitle)}</div></div>{badge_html}</div>',
+        f'<div class="page-header"><div>'
+        f'<div class="page-eyebrow">NexaDocs workspace</div>'
+        f'<div class="page-title">{escape(title)}</div>'
+        f'<div class="page-subtitle">{escape(subtitle)}</div>'
+        f'</div>{badge_html}</div>',
         unsafe_allow_html=True,
     )
 
 
 def auth_page() -> None:
-    left, center, right = st.columns([1, 1.25, 1])
-    with center:
-        st.markdown('<div class="hero"><h2>RAG AI</h2><p>Secure multi-tenant document intelligence for modern teams.</p></div>', unsafe_allow_html=True)
+    visual, panel = st.columns([1.12, .88], gap="large")
+    with visual:
+        st.markdown(
+            '<div class="auth-visual">'
+            '<div class="auth-logo"><span class="auth-logo-mark">✦</span>NexaDocs AI</div>'
+            '<div class="auth-headline">Turn every document into an answer.</div>'
+            '<div class="auth-copy">A secure intelligence workspace for teams that need fast, grounded answers — with every response connected to its original evidence.</div>'
+            '<div class="auth-feature"><span class="auth-feature-icon">⌁</span><span>Hybrid semantic and keyword retrieval for higher-quality results.</span></div>'
+            '<div class="auth-feature"><span class="auth-feature-icon">✓</span><span>Source-level citations make every generated answer easy to verify.</span></div>'
+            '<div class="auth-feature"><span class="auth-feature-icon">⌾</span><span>Tenant isolation, role-based access, and secure document processing.</span></div>'
+            '<div class="auth-proof"><span>Private by design</span><span>Evidence grounded</span><span>Team ready</span></div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    with panel:
+        st.markdown(
+            '<div class="auth-panel">'
+            '<div class="auth-panel-kicker">Secure workspace</div>'
+            '<div class="auth-panel-title">Welcome to NexaDocs</div>'
+            '<div class="auth-panel-copy">Sign in to your workspace or create a new one in minutes.</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
         login_tab, register_tab = st.tabs(["Sign in", "Create workspace"])
         with login_tab:
             with st.form("login"):
-                tenant_code = st.text_input("Workspace code")
-                email = st.text_input("Email")
-                password = st.text_input("Password", type="password")
+                tenant_code = st.text_input("Workspace code", placeholder="e.g. acme-team")
+                email = st.text_input("Email", placeholder="you@company.com")
+                password = st.text_input("Password", type="password", placeholder="Enter your password")
                 submit = st.form_submit_button("Sign in", use_container_width=True, type="primary")
             if submit:
                 ok, data, _ = request_api("POST", "/api/v1/auth/login", auth=False, json={"tenant_code": tenant_code, "email": email, "password": password})
@@ -429,11 +568,11 @@ def auth_page() -> None:
                 st.error(data)
         with register_tab:
             with st.form("register"):
-                tenant_name = st.text_input("Workspace name")
-                tenant_code = st.text_input("Workspace code", key="reg_code")
-                full_name = st.text_input("Administrator name")
-                email = st.text_input("Administrator email", key="reg_email")
-                password = st.text_input("Password", type="password", key="reg_pass")
+                tenant_name = st.text_input("Workspace name", placeholder="Acme Knowledge Hub")
+                tenant_code = st.text_input("Workspace code", key="reg_code", placeholder="acme-team")
+                full_name = st.text_input("Administrator name", placeholder="Full name")
+                email = st.text_input("Administrator email", key="reg_email", placeholder="admin@company.com")
+                password = st.text_input("Password", type="password", key="reg_pass", placeholder="Create a strong password")
                 confirm = st.text_input("Confirm password", type="password")
                 submit = st.form_submit_button("Create workspace", use_container_width=True, type="primary")
             if submit:
@@ -451,10 +590,11 @@ def sidebar() -> str:
         st.markdown('<div class="brand"><div class="brand-mark"></div><div><div class="brand-name">NexaDocs AI</div><div class="brand-sub">Document Intelligence</div></div></div>', unsafe_allow_html=True)
         tenant = tenant_data()
         user = user_data()
+        tenant_name = tenant.get("tenant_name") or "My Workspace"
         st.markdown(
             f'<div class="workspace-card">'
             f'<div class="workspace-kicker">Current workspace</div>'
-            f'<div class="workspace-name">My Workspace</div>'
+            f'<div class="workspace-name">{escape(str(tenant_name))}</div>'
             f'<div class="workspace-meta">'
             f'{escape(str(user.get("user_full_name") or user.get("user_email", "User")))}'
             f'</div><div class="workspace-meta">'
@@ -462,12 +602,31 @@ def sidebar() -> str:
             f'</div></div>',
             unsafe_allow_html=True,
         )
-        pages = ["Overview", "Projects", "Documents", "AI Assistant", "Tasks", "Account"]
+        navigation = [
+            ("Overview", "◫  Overview"),
+            ("Projects", "◇  Projects"),
+            ("Documents", "▤  Documents"),
+            ("AI Assistant", "✦  AI Assistant"),
+            ("Tasks", "◷  Tasks"),
+            ("Account", "◎  Account"),
+        ]
         if is_admin():
-            pages += ["Users", "Roles", "Database Connections", "API Catalog"]
-        page = st.radio("Navigation", pages, label_visibility="collapsed")
+            navigation += [
+                ("Users", "♙  Users"),
+                ("Roles", "⌘  Roles"),
+                ("Database Connections", "◉  Database Connections"),
+                ("API Catalog", "⌁  API Catalog"),
+            ]
+        labels = [label for _, label in navigation]
+        selected = st.radio("Navigation", labels, label_visibility="collapsed")
+        page = dict((label, name) for name, label in navigation)[selected]
         st.divider()
-        st.session_state.api_url = st.text_input("Backend URL", value=st.session_state.api_url).rstrip("/")
+        with st.expander("Connection settings", expanded=False):
+            st.session_state.api_url = st.text_input(
+                "Backend URL",
+                value=st.session_state.api_url,
+                help="The FastAPI base URL used by this interface.",
+            ).rstrip("/")
         if st.button("Sign out", use_container_width=True):
             logout()
     return page
@@ -494,19 +653,45 @@ def project_selector(key: str):
 def overview() -> None:
     page_header("Workspace overview", "Monitor projects, documents, and account access.", "System online")
     projects = fetch_projects()
+    full_name = user_data().get("user_full_name") or "there"
+    first_name = str(full_name).split()[0]
+    workspace_name = tenant_data().get("tenant_name") or "your workspace"
+    st.markdown(
+        f'<div class="hero"><div class="hero-kicker">Intelligence workspace</div>'
+        f'<h2>Good to see you, {escape(first_name)}.</h2>'
+        f'<p>{escape(str(workspace_name))} is ready. Organize your knowledge, index new files, and ask evidence-grounded questions from one secure place.</p></div>',
+        unsafe_allow_html=True,
+    )
     cols = st.columns(3)
     values = [
-        ("Projects", len(projects), "Knowledge workspaces"),
-        ("Account status", user_data().get("user_status", "-"), "Authenticated user"),
-        ("Tenant status", tenant_data().get("tenant_status", "-"), "Workspace availability"),
+        ("◇", "Projects", len(projects), "Knowledge spaces"),
+        ("◎", "Account status", str(user_data().get("user_status", "-")).title(), "Authenticated user"),
+        ("⌁", "Workspace status", str(tenant_data().get("tenant_status", "-")).title(), "Service availability"),
     ]
-    for col, (label, value, note) in zip(cols, values):
-        col.markdown(f'<div class="metric-card"><div class="metric-label">{escape(str(label))}</div><div class="metric-value">{escape(str(value))}</div><div class="metric-note">{escape(str(note))}</div></div>', unsafe_allow_html=True)
-    st.markdown("### Recent projects")
+    for col, (icon, label, value, note) in zip(cols, values):
+        col.markdown(
+            f'<div class="metric-card"><div class="metric-top">'
+            f'<div class="metric-label">{escape(str(label))}</div>'
+            f'<div class="metric-icon">{escape(icon)}</div></div>'
+            f'<div class="metric-value">{escape(str(value))}</div>'
+            f'<div class="metric-note">{escape(str(note))}</div></div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown(
+        f'<div class="section-heading"><div class="section-title">Recent projects</div>'
+        f'<div class="section-meta">Showing up to 5 of {len(projects)}</div></div>',
+        unsafe_allow_html=True,
+    )
     if not projects:
         st.info("No projects yet.")
     for p in projects[:5]:
-        st.markdown(f'<div class="card"><b>{escape(p["project_name"])}</b><div class="small-muted">{escape(p.get("project_description") or "No description")}</div></div><br>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="card project-card"><div class="project-icon">◇</div><div>'
+            f'<div class="project-name">{escape(p["project_name"])}</div>'
+            f'<div class="small-muted">{escape(p.get("project_description") or "No description added yet")}</div>'
+            f'</div></div><div style="height:.55rem"></div>',
+            unsafe_allow_html=True,
+        )
 
 
 def projects_page() -> None:
@@ -534,7 +719,7 @@ def documents_page() -> None:
     project_id, project = project_selector("docs_project")
     if project_id is None:
         return
-    st.markdown(f'<div class="hero"><h2>{escape(project["project_name"])}</h2><p>Supported formats: PDF, TXT, DOCX, CSV, XLSX, and XLS.</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="hero"><div class="hero-kicker">Document library</div><h2>{escape(project["project_name"])}</h2><p>Upload and index PDF, TXT, DOCX, CSV, XLSX, and XLS files. Every processed file becomes searchable by the AI assistant.</p></div>', unsafe_allow_html=True)
     if can_manage_files():
         file = st.file_uploader("Drop a document here", type=["pdf", "txt", "docx", "csv", "xlsx", "xls"])
         if st.button("Upload and index", type="primary", disabled=file is None):
@@ -651,7 +836,7 @@ def assistant_page() -> None:
     if st.session_state.chat_project_id != project_id:
         st.session_state.chat_project_id = project_id
         st.session_state.chat_messages = []
-    st.markdown(f'<div class="hero"><h2>Chat with {escape(project["project_name"])}</h2><p>Answers are generated from retrieved project evidence. Open Sources under a response to verify the supporting file and location.</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="hero"><div class="hero-kicker">Grounded AI assistant</div><h2>Chat with {escape(project["project_name"])}</h2><p>Ask in natural language and receive answers grounded in your indexed content. Open Sources under any response to verify the exact supporting file and location.</p></div>', unsafe_allow_html=True)
     c1, c2 = st.columns([5, 1])
     with c2:
         if st.button("Clear", use_container_width=True):

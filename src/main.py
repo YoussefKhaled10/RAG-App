@@ -1,7 +1,13 @@
 import inspect
 
 from fastapi import FastAPI
-from routes import base, data, nlp , tasks
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+
+from core.credentials_encryption import CredentialsEncryptionService
+from helpers.config import get_settings
+from routes import base, tasks
 from routes.auth import auth_router
 from routes.database_connections import database_connections_router
 from routes.files import files_router
@@ -24,6 +30,13 @@ app = FastAPI()
 
 async def startup_span() -> None:
     settings = get_settings()
+
+    # =========================
+    # Credentials encryption
+    # =========================
+    # This service encrypts external database passwords before storage.
+    # The encryption key is loaded from the environment and is never
+    # stored in PostgreSQL or returned through an API response.
     app.credentials_encryption_service = (
         CredentialsEncryptionService(
             settings.DATABASE_CREDENTIALS_ENCRYPTION_KEY
@@ -31,7 +44,9 @@ async def startup_span() -> None:
     )
     print("Credentials encryption service initialized")
 
-
+    # =========================
+    # PostgreSQL connection
+    # =========================
     app.db_engine = create_async_engine(
         settings.POSTGRES_URL,
         echo=False,
@@ -44,18 +59,29 @@ async def startup_span() -> None:
         expire_on_commit=False,
     )
 
+    # Test the main application database connection early.
     async with app.db_client() as session:
         await session.execute(text("SELECT 1"))
 
     print("PostgreSQL connected successfully")
 
+    # =========================
+    # LLM Factory
+    # =========================
     llm_provider_factory = LLMProviderFactory(settings)
 
+    # =========================
+    # Vector DB Factory
+    # =========================
+    # PGVectorProvider needs the SQLAlchemy async sessionmaker.
     vectordb_provider_factory = VectorDBProviderFactory(
         config=settings,
         db_client=app.db_client,
     )
 
+    # =========================
+    # Generation client
+    # =========================
     app.generation_client = llm_provider_factory.create(
         provider=settings.GENERATION_BACKEND
     )
@@ -92,7 +118,9 @@ async def startup_span() -> None:
 
     print("Embedding client initialized")
 
-
+    # =========================
+    # Vector DB client
+    # =========================
     app.vectordb_client = vectordb_provider_factory.create(
         provider=settings.VECTOR_DB_BACKEND
     )
@@ -103,13 +131,17 @@ async def startup_span() -> None:
             f"{settings.VECTOR_DB_BACKEND}"
         )
 
-
+    # PGVectorProvider.connect() may be async.
+    # Other providers may expose a synchronous connect method.
     connect_result = app.vectordb_client.connect()
     if inspect.isawaitable(connect_result):
         await connect_result
 
     print("Vector DB client initialized")
 
+    # =========================
+    # Template Parser
+    # =========================
     app.template_parser = TemplateParser(
         language=settings.PRIMARY_LANG,
         default_language=settings.DEFAULT_LANG,
@@ -119,7 +151,9 @@ async def startup_span() -> None:
 
 
 async def shutdown_span() -> None:
-
+    # =========================
+    # Vector DB disconnect
+    # =========================
     if (
         hasattr(app, "vectordb_client")
         and app.vectordb_client
@@ -128,7 +162,9 @@ async def shutdown_span() -> None:
         if inspect.isawaitable(disconnect_result):
             await disconnect_result
 
-
+    # =========================
+    # PostgreSQL disconnect
+    # =========================
     if hasattr(app, "db_engine") and app.db_engine:
         await app.db_engine.dispose()
 
