@@ -401,7 +401,7 @@ async def ask_project(
         )
 
     # The user-facing answer still receives the original question.
-    answer = _nlp(
+    answer = await _nlp(
         request
     ).answer_from_hybrid_results(
         question=payload.question,

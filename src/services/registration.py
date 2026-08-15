@@ -10,7 +10,6 @@ from schemas.registration import TenantRegistrationRequest
 class RegistrationConflictError(ValueError):
     pass
 
-
 @dataclass
 class RegistrationResult:
     tenant: Tenant

@@ -56,10 +56,37 @@ from .search import (
 
 
 from .database_connection import (
+    DatabaseColumnResponse,
+    DatabaseForeignKeyResponse,
+    DatabasePrimaryKeyResponse,
+    DatabaseRelationshipResponse,
+    DatabaseSchemaCacheResponse,
     DatabaseConnectionCreate,
     DatabaseConnectionListResponse,
     DatabaseConnectionResponse,
-    DatabaseConnectionUpdate
+    DatabaseConnectionTestResponse,
+    DatabaseConnectionUpdate,
+    DatabaseSchemaDiscoveryResponse,
+    DatabaseSchemaResponse,
+    DatabaseSchemaSyncResponse,
+    DatabaseTableResponse,
+)
+
+from .database_permission import (
+    DatabaseColumnPermissionResponse,
+    DatabaseColumnPermissionUpsert,
+    DatabasePermissionCatalogResponse,
+    DatabaseQueryAggregate,
+    DatabaseQueryFilter,
+    DatabaseQueryOrderBy,
+    DatabaseRolePermissionUpsert,
+    DatabaseRowFilterResponse,
+    DatabaseRowFilterUpsert,
+    DatabaseTablePermissionResponse,
+    DatabaseTablePermissionUpsert,
+    PermissionFilteredDatabaseSchemaResponse,
+    SecureDatabaseQueryRequest,
+    SecureDatabaseQueryResponse,
 )
 
 
@@ -101,8 +128,32 @@ __all__ = [
     "HybridSearchResult",
     "CitationInfo",
     "ConversationMessage",
+    "DatabaseColumnResponse",
+    "DatabaseForeignKeyResponse",
+    "DatabasePrimaryKeyResponse",
+    "DatabaseRelationshipResponse",
+    "DatabaseSchemaCacheResponse",
     "DatabaseConnectionCreate",
     "DatabaseConnectionListResponse",
     "DatabaseConnectionResponse",
-    "DatabaseConnectionUpdate"
+    "DatabaseConnectionTestResponse",
+    "DatabaseConnectionUpdate",
+    "DatabaseSchemaDiscoveryResponse",
+    "DatabaseSchemaResponse",
+    "DatabaseSchemaSyncResponse",
+    "DatabaseTableResponse",
+    "DatabaseColumnPermissionResponse",
+    "DatabaseColumnPermissionUpsert",
+    "DatabasePermissionCatalogResponse",
+    "DatabaseQueryAggregate",
+    "DatabaseQueryFilter",
+    "DatabaseQueryOrderBy",
+    "DatabaseRolePermissionUpsert",
+    "DatabaseRowFilterResponse",
+    "DatabaseRowFilterUpsert",
+    "DatabaseTablePermissionResponse",
+    "DatabaseTablePermissionUpsert",
+    "PermissionFilteredDatabaseSchemaResponse",
+    "SecureDatabaseQueryRequest",
+    "SecureDatabaseQueryResponse",
 ]

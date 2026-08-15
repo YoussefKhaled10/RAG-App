@@ -38,6 +38,7 @@ async def process_uploaded_file_async(
     chunk_size: int = 500,
     overlap_size: int = 50,
     celery_task_id: str | None = None,
+    run_id: str | None = None,
 ):
     settings = get_settings()
     tenant_uuid = UUID(tenant_id)
@@ -52,6 +53,8 @@ async def process_uploaded_file_async(
         "chunk_size": chunk_size,
         "overlap_size": overlap_size,
     }
+    if run_id is not None:
+        task_args["run_id"] = str(run_id)
 
     db_engine = create_async_engine(
         settings.POSTGRES_URL,
@@ -463,6 +466,7 @@ def process_uploaded_file(
     file_id: str,
     chunk_size: int = 500,
     overlap_size: int = 50,
+    run_id: str | None = None,
 ):
     return asyncio.run(
         process_uploaded_file_async(
@@ -473,5 +477,6 @@ def process_uploaded_file(
             chunk_size=chunk_size,
             overlap_size=overlap_size,
             celery_task_id=self.request.id,
+            run_id=run_id,
         )
     )
