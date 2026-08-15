@@ -262,7 +262,6 @@ artifacts/
 # Local machine-learning model files
 # ==================================================
 
-models/
 huggingface/
 .huggingface/
 *.safetensors
