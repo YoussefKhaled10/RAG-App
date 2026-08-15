@@ -1,8 +1,10 @@
+import json
 import os
 import re
 import time
 from html import escape
 from typing import Any
+from urllib.parse import quote
 
 import requests
 import streamlit as st
@@ -249,7 +251,7 @@ html {scroll-behavior:smooth;}
 .api-description {color:#6e788a; font-size:.72rem; margin-top:.16rem;}
 .api-count {display:inline-flex; padding:.27rem .58rem; border-radius:999px; background:#f0eeff; color:#5b4bec; font-size:.69rem; font-weight:800;}
 
-#MainMenu, footer, [data-testid="stToolbar"] {visibility:hidden;}
+#MainMenu, footer {visibility:hidden;}
 header[data-testid="stHeader"] {background:transparent;}
 [data-testid="stDecoration"] {background:linear-gradient(90deg,#6d5dfc,#19c7d8); height:2px;}
 
@@ -452,7 +454,15 @@ def init_state() -> None:
 init_state()
 
 
-def request_api(method: str, path: str, *, auth: bool = True, timeout: int = REQUEST_TIMEOUT, **kwargs: Any):
+def request_api(
+    method: str,
+    path: str,
+    *,
+    auth: bool = True,
+    timeout: int = REQUEST_TIMEOUT,
+    _allow_refresh: bool = True,
+    **kwargs: Any,
+):
     headers = dict(kwargs.pop("headers", {}))
     if auth and st.session_state.access_token:
         headers["Authorization"] = f"Bearer {st.session_state.access_token}"
@@ -460,6 +470,46 @@ def request_api(method: str, path: str, *, auth: bool = True, timeout: int = REQ
         response = requests.request(method, f"{st.session_state.api_url}{path}", headers=headers, timeout=timeout, **kwargs)
     except requests.RequestException as exc:
         return False, f"Backend connection failed: {exc}", 0
+
+    # Keep the Streamlit session alive by using the backend refresh endpoint.
+    # The original request is retried once with the newly issued access token.
+    if (
+        response.status_code == 401
+        and auth
+        and _allow_refresh
+        and st.session_state.refresh_token
+        and path != "/api/v1/auth/refresh"
+    ):
+        try:
+            refresh_response = requests.post(
+                f"{st.session_state.api_url}/api/v1/auth/refresh",
+                json={"refresh_token": st.session_state.refresh_token},
+                timeout=timeout,
+            )
+            if refresh_response.ok:
+                refreshed = refresh_response.json()
+                st.session_state.access_token = refreshed.get("access_token")
+                st.session_state.refresh_token = (
+                    refreshed.get("refresh_token")
+                    or st.session_state.refresh_token
+                )
+                retry_kwargs = dict(kwargs)
+                retry_kwargs["headers"] = {
+                    key: value
+                    for key, value in headers.items()
+                    if key.lower() != "authorization"
+                }
+                return request_api(
+                    method,
+                    path,
+                    auth=auth,
+                    timeout=timeout,
+                    _allow_refresh=False,
+                    **retry_kwargs,
+                )
+        except (requests.RequestException, ValueError):
+            pass
+
     if response.status_code == 204:
         return True, None, 204
     try:
@@ -576,7 +626,7 @@ def auth_page() -> None:
                 confirm = st.text_input("Confirm password", type="password")
                 submit = st.form_submit_button("Create workspace", use_container_width=True, type="primary")
             if submit:
-                ok, data, _ = request_api("POST", "/api/v1/auth/register", auth=False, json={"tenant_name": tenant_name, "tenant_code": tenant_code, "admin_full_name": full_name, "admin_email": email, "password": password, "confirm_password": confirm})
+                ok, data, _ = request_api("POST", "/api/v1/auth/register-tenant", auth=False, json={"tenant_name": tenant_name, "tenant_code": tenant_code, "admin_full_name": full_name, "admin_email": email, "password": password, "confirm_password": confirm})
                 if ok:
                     st.session_state.access_token = data["access_token"]
                     st.session_state.refresh_token = data["refresh_token"]
@@ -607,15 +657,17 @@ def sidebar() -> str:
             ("Projects", "◇  Projects"),
             ("Documents", "▤  Documents"),
             ("AI Assistant", "✦  AI Assistant"),
+            ("Database Access", "▦  Database Data"),
             ("Tasks", "◷  Tasks"),
             ("Account", "◎  Account"),
+            ("API Explorer", "⌁  All Project APIs"),
         ]
         if is_admin():
             navigation += [
                 ("Users", "♙  Users"),
                 ("Roles", "⌘  Roles"),
                 ("Database Connections", "◉  Database Connections"),
-                ("API Catalog", "⌁  API Catalog"),
+                ("Database Permissions", "⚿  Database Permissions"),
             ]
         labels = [label for _, label in navigation]
         selected = st.radio("Navigation", labels, label_visibility="collapsed")
@@ -651,7 +703,17 @@ def project_selector(key: str):
 
 
 def overview() -> None:
-    page_header("Workspace overview", "Monitor projects, documents, and account access.", "System online")
+    welcome_ok, welcome_data, _ = request_api(
+        "GET",
+        "/api/v1/welcome",
+        auth=False,
+        timeout=10,
+    )
+    page_header(
+        "Workspace overview",
+        "Monitor projects, documents, and account access.",
+        "Backend online" if welcome_ok else "Backend unavailable",
+    )
     projects = fetch_projects()
     full_name = user_data().get("user_full_name") or "there"
     first_name = str(full_name).split()[0]
@@ -659,7 +721,8 @@ def overview() -> None:
     st.markdown(
         f'<div class="hero"><div class="hero-kicker">Intelligence workspace</div>'
         f'<h2>Good to see you, {escape(first_name)}.</h2>'
-        f'<p>{escape(str(workspace_name))} is ready. Organize your knowledge, index new files, and ask evidence-grounded questions from one secure place.</p></div>',
+        f'<p>{escape(str(workspace_name))} is ready. Organize your knowledge, index new files, and ask evidence-grounded questions from one secure place.</p>'
+        f'<p>{escape(str(welcome_data.get("message") if welcome_ok and isinstance(welcome_data, dict) else "FastAPI could not be reached."))}</p></div>',
         unsafe_allow_html=True,
     )
     cols = st.columns(3)
@@ -695,7 +758,11 @@ def overview() -> None:
 
 
 def projects_page() -> None:
-    page_header("Projects", "Organize documents into isolated knowledge spaces.")
+    page_header(
+        "Projects",
+        "Create, inspect, update, and delete isolated knowledge spaces.",
+        "5 project APIs",
+    )
     if is_admin():
         with st.expander("＋ Create project"):
             with st.form("create_project"):
@@ -708,14 +775,103 @@ def projects_page() -> None:
                     st.success("Project created.")
                     st.rerun()
                 st.error(data)
-    for p in fetch_projects():
+
+    projects = fetch_projects()
+    if not projects:
+        st.info("No projects are available.")
+        return
+
+    for p in projects:
+        project_id = int(p["project_id"])
+        detail_key = f"project_api_details_{project_id}"
         with st.expander(f"{p['project_name']}  ·  Project #{p['project_id']}"):
-            st.write(p.get("project_description") or "No description")
-            st.caption(f"Created: {p.get('created_at', '-')}")
+            latest = st.session_state.get(detail_key) or p
+            st.write(latest.get("project_description") or "No description")
+            dates = st.columns(2)
+            dates[0].caption(f"Created: {_friendly_datetime(latest.get('created_at'))}")
+            dates[1].caption(f"Updated: {_friendly_datetime(latest.get('updated_at'))}")
+
+            if st.button(
+                "Load latest project details",
+                use_container_width=True,
+                key=f"get_project_{project_id}",
+            ):
+                ok, result, _ = request_api(
+                    "GET",
+                    f"/api/v1/projects/{project_id}",
+                )
+                if ok:
+                    st.session_state[detail_key] = result
+                    st.success("Project details loaded from the single-project API.")
+                    st.rerun()
+                else:
+                    st.error(result)
+
+            if not is_admin():
+                continue
+
+            st.markdown("#### Edit project")
+            with st.form(f"edit_project_{project_id}"):
+                updated_name = st.text_input(
+                    "Project name",
+                    value=str(latest.get("project_name") or ""),
+                    key=f"project_name_{project_id}",
+                )
+                updated_description = st.text_area(
+                    "Description",
+                    value=str(latest.get("project_description") or ""),
+                    key=f"project_description_{project_id}",
+                )
+                save_project = st.form_submit_button(
+                    "Save project changes",
+                    type="primary",
+                    use_container_width=True,
+                )
+            if save_project:
+                ok, result, _ = request_api(
+                    "PATCH",
+                    f"/api/v1/projects/{project_id}",
+                    json={
+                        "project_name": updated_name,
+                        "project_description": updated_description or None,
+                    },
+                )
+                if ok:
+                    st.session_state[detail_key] = result
+                    st.success("Project updated successfully.")
+                    st.rerun()
+                else:
+                    st.error(result)
+
+            st.markdown("#### Danger zone")
+            delete_confirmed = st.checkbox(
+                "Delete this project and its project data.",
+                key=f"confirm_delete_project_{project_id}",
+            )
+            if st.button(
+                "Delete project",
+                use_container_width=True,
+                key=f"delete_project_{project_id}",
+                disabled=not delete_confirmed,
+            ):
+                ok, result, _ = request_api(
+                    "DELETE",
+                    f"/api/v1/projects/{project_id}",
+                )
+                if ok:
+                    st.session_state.pop(detail_key, None)
+                    st.success("Project deleted successfully.")
+                    st.rerun()
+                else:
+                    st.error(result)
 
 
 def documents_page() -> None:
-    page_header("Documents", "Upload, process, download, and re-index project files.")
+    page_header(
+        "Documents",
+        "Upload, inspect, process, download, re-index, and delete project files.",
+        "6 file APIs",
+    )
     project_id, project = project_selector("docs_project")
     if project_id is None:
         return
@@ -737,27 +893,48 @@ def documents_page() -> None:
         cfg = asset.get("asset_config") or {}
         name = cfg.get("original_file_name") or asset.get("asset_name")
         with st.expander(f"📄 {name}"):
+            asset_id = int(asset["asset_id"])
+            metadata_key = f"file_api_details_{project_id}_{asset_id}"
+            exact_asset = st.session_state.get(metadata_key) or asset
             c1, c2, c3 = st.columns(3)
-            c1.metric("Status", asset.get("asset_status", "-"))
-            c2.metric("Size", f"{asset.get('asset_size', 0):,} B")
-            c3.metric("Chunks", asset.get("asset_indexed_chunks", 0))
-            if asset.get("asset_error"):
-                st.error(asset["asset_error"])
-            d_ok, content, _ = request_api("GET", f"/api/v1/projects/{project_id}/files/{asset['asset_id']}/download", timeout=120)
+            c1.metric("Status", exact_asset.get("asset_status", "-"))
+            c2.metric("Size", f"{exact_asset.get('asset_size', 0):,} B")
+            c3.metric("Chunks", exact_asset.get("asset_indexed_chunks", 0))
+            if exact_asset.get("asset_error"):
+                st.error(exact_asset["asset_error"])
+
+            if st.button(
+                "Refresh file metadata",
+                use_container_width=True,
+                key=f"get_file_metadata_{project_id}_{asset_id}",
+            ):
+                ok, result, _ = request_api(
+                    "GET",
+                    f"/api/v1/projects/{project_id}/files/{asset_id}",
+                )
+                if ok:
+                    st.session_state[metadata_key] = result
+                    st.success("File metadata refreshed.")
+                    st.rerun()
+                else:
+                    st.error(result)
+
+            d_ok, content, _ = request_api("GET", f"/api/v1/projects/{project_id}/files/{asset_id}/download", timeout=120)
             if d_ok and isinstance(content, bytes):
-                st.download_button("Download", content, file_name=name, mime=cfg.get("content_type") or "application/octet-stream", key=f"dl_{asset['asset_id']}")
+                st.download_button("Download", content, file_name=name, mime=cfg.get("content_type") or "application/octet-stream", key=f"dl_{asset_id}")
             if can_manage_files():
                 b1, b2 = st.columns(2)
-                if b1.button("Reprocess", key=f"rp_{asset['asset_id']}"):
-                    ok, result, _ = request_api("POST", f"/api/v1/projects/{project_id}/files/{asset['asset_id']}/reprocess")
+                if b1.button("Reprocess", key=f"rp_{asset_id}"):
+                    ok, result, _ = request_api("POST", f"/api/v1/projects/{project_id}/files/{asset_id}/reprocess")
                     if ok:
                         st.session_state.last_task_id = result.get("task_id")
                         st.success("Reprocessing queued.")
                     else:
                         st.error(result)
-                if b2.button("Delete", key=f"del_{asset['asset_id']}"):
-                    ok, result, _ = request_api("DELETE", f"/api/v1/projects/{project_id}/files/{asset['asset_id']}")
+                if b2.button("Delete", key=f"del_{asset_id}"):
+                    ok, result, _ = request_api("DELETE", f"/api/v1/projects/{project_id}/files/{asset_id}")
                     if ok:
+                        st.session_state.pop(metadata_key, None)
                         st.rerun()
                     st.error(result)
 
@@ -829,7 +1006,11 @@ def build_conversation_history(
 
 
 def assistant_page() -> None:
-    page_header("AI Assistant", "Ask grounded questions across the selected project's indexed documents.", "RAG enabled")
+    page_header(
+        "AI Assistant",
+        "Run direct hybrid retrieval or ask grounded questions across indexed documents.",
+        "2 search APIs",
+    )
     project_id, project = project_selector("assistant_project")
     if project_id is None:
         return
@@ -837,6 +1018,76 @@ def assistant_page() -> None:
         st.session_state.chat_project_id = project_id
         st.session_state.chat_messages = []
     st.markdown(f'<div class="hero"><div class="hero-kicker">Grounded AI assistant</div><h2>Chat with {escape(project["project_name"])}</h2><p>Ask in natural language and receive answers grounded in your indexed content. Open Sources under any response to verify the exact supporting file and location.</p></div>', unsafe_allow_html=True)
+
+    with st.expander("⌕ Direct hybrid search API", expanded=False):
+        st.caption(
+            "Runs POST /api/v1/projects/{project_id}/search directly and "
+            "returns the ranked chunks without generating an answer."
+        )
+        with st.form(f"hybrid_search_{project_id}"):
+            search_query = st.text_input(
+                "Search query",
+                placeholder="Find the most relevant indexed passages",
+            )
+            s1, s2, s3 = st.columns(3)
+            search_limit = s1.number_input("Final results", 1, 20, 5)
+            semantic_limit = s2.number_input(
+                "Semantic candidates",
+                1,
+                100,
+                20,
+                key="direct_semantic_limit",
+            )
+            keyword_limit = s3.number_input(
+                "Keyword candidates",
+                1,
+                100,
+                20,
+                key="direct_keyword_limit",
+            )
+            rerank = st.checkbox("Use reranking when configured", value=True)
+            run_search = st.form_submit_button(
+                "Run hybrid search",
+                type="primary",
+                use_container_width=True,
+            )
+        if run_search:
+            if not search_query.strip():
+                st.error("Search query is required.")
+            else:
+                ok, result, _ = request_api(
+                    "POST",
+                    f"/api/v1/projects/{project_id}/search",
+                    json={
+                        "query": search_query.strip(),
+                        "limit": int(search_limit),
+                        "semantic_limit": int(semantic_limit),
+                        "keyword_limit": int(keyword_limit),
+                        "rrf_k": 60,
+                        "rerank": rerank,
+                        "rerank_candidates": max(
+                            int(search_limit),
+                            int(semantic_limit),
+                            int(keyword_limit),
+                            30,
+                        ),
+                    },
+                    timeout=120,
+                )
+                if ok:
+                    st.session_state[f"hybrid_search_result_{project_id}"] = result
+                else:
+                    st.error(result)
+
+        direct_results = st.session_state.get(
+            f"hybrid_search_result_{project_id}"
+        )
+        if isinstance(direct_results, dict):
+            st.success(
+                f"Returned {direct_results.get('total', 0)} ranked results."
+            )
+            render_friendly_data(direct_results.get("results") or [])
+
     c1, c2 = st.columns([5, 1])
     with c2:
         if st.button("Clear", use_container_width=True):
@@ -915,7 +1166,11 @@ def assistant_page() -> None:
 
 
 def tasks_page() -> None:
-    page_header("Tasks", "Track background document processing jobs.")
+    page_header(
+        "Tasks",
+        "Track background document processing jobs.",
+        "1 task API",
+    )
     task_id = st.text_input("Task ID", value=st.session_state.last_task_id or "")
     auto = st.toggle("Auto refresh", value=False)
     if st.button("Check status", type="primary") or (auto and task_id):
@@ -954,6 +1209,7 @@ def users_page() -> None:
     page_header(
         "Users",
         "Create accounts, update access, change passwords, and manage roles.",
+        "11 user APIs",
     )
 
     current_user_id = str(user_data().get("user_id") or "")
@@ -1051,6 +1307,24 @@ def users_page() -> None:
                 disabled=True,
                 key=f"created_{user_id}",
             )
+            if st.button(
+                "Load exact user record",
+                use_container_width=True,
+                key=f"get_user_{user_id}",
+            ):
+                ok, result, _ = request_api(
+                    "GET",
+                    f"/api/v1/users/{user_id}",
+                    params={"include_roles": True},
+                )
+                if ok:
+                    st.session_state[f"exact_user_{user_id}"] = result
+                    st.success("User record loaded from the single-user API.")
+                else:
+                    st.error(result)
+            exact_user = st.session_state.get(f"exact_user_{user_id}")
+            if isinstance(exact_user, dict):
+                render_friendly_data(exact_user, title="Exact user response")
             st.caption("Email changes are not supported by the current backend API.")
 
             c1, c2 = st.columns(2)
@@ -1142,6 +1416,31 @@ def users_page() -> None:
                 st.caption("Current roles: No roles assigned")
 
             available_names = list(role_by_name)
+            single_role_options = [
+                name for name in available_names if name not in assigned_names
+            ]
+            if single_role_options:
+                single_role_name = st.selectbox(
+                    "Assign one role with the single-role API",
+                    options=single_role_options,
+                    key=f"single_role_{user_id}",
+                )
+                if st.button(
+                    "Assign this role",
+                    use_container_width=True,
+                    key=f"assign_single_role_{user_id}",
+                ):
+                    role_id = role_by_name[single_role_name]["role_id"]
+                    ok, result, _ = request_api(
+                        "POST",
+                        f"/api/v1/users/{user_id}/roles/{role_id}",
+                    )
+                    if ok:
+                        st.success("Role assigned successfully.")
+                        st.rerun()
+                    else:
+                        st.error(result)
+
             selected_roles = st.multiselect(
                 "Assign one or more roles",
                 options=available_names,
@@ -1226,6 +1525,7 @@ def roles_page() -> None:
     page_header(
         "Roles",
         "Create custom roles and manage the workspace role catalog.",
+        "6 role APIs",
     )
 
     with st.expander("＋ Create custom role", expanded=False):
@@ -1278,6 +1578,24 @@ def roles_page() -> None:
         label = f"🔒 {role_name} · System" if is_system else f"🛠️ {role_name} · Custom"
 
         with st.expander(label):
+            if st.button(
+                "Load exact role record",
+                use_container_width=True,
+                key=f"get_role_{role_id}",
+            ):
+                ok, result, _ = request_api(
+                    "GET",
+                    f"/api/v1/roles/{role_id}",
+                )
+                if ok:
+                    st.session_state[f"exact_role_{role_id}"] = result
+                    st.success("Role record loaded from the single-role API.")
+                else:
+                    st.error(result)
+            exact_role = st.session_state.get(f"exact_role_{role_id}")
+            if isinstance(exact_role, dict):
+                render_friendly_data(exact_role, title="Exact role response")
+
             if is_system:
                 details = system_details.get(role_name, {})
                 st.write(details.get("description") or role.get("role_description") or "No description")
@@ -1362,11 +1680,738 @@ def _fetch_database_connections() -> list[dict[str, Any]]:
     return data.get("items", [])
 
 
+def _render_schema_metadata(data: dict[str, Any]) -> None:
+    """Render discovered or cached database metadata without exposing rows."""
+    if not isinstance(data, dict):
+        st.error("The backend returned an invalid schema response.")
+        return
+
+    metric_values = [
+        ("Schemas", data.get("schema_count", 0)),
+        ("Tables / views", data.get("table_count", 0)),
+        ("Columns", data.get("column_count", 0)),
+        ("Primary keys", data.get("primary_key_count", 0)),
+        ("Foreign keys", data.get("foreign_key_count", 0)),
+        ("Relationships", data.get("relationship_count", 0)),
+    ]
+    for column, (label, value) in zip(st.columns(6), metric_values):
+        column.metric(label, value)
+
+    timestamp = data.get("synced_at") or data.get("discovered_at")
+    if timestamp:
+        st.caption("Metadata time: " + _friendly_datetime(str(timestamp)))
+    if data.get("schema_hash"):
+        st.code(str(data["schema_hash"]), language=None)
+    if "changed" in data:
+        if data.get("changed"):
+            st.success("The database structure changed and the cache was updated.")
+        else:
+            st.info("No structural changes were detected since the previous sync.")
+    if data.get("permissions_invalidated"):
+        st.warning(
+            "The schema changed, so the previous table/column permissions "
+            "were removed. Review and publish fresh role policies."
+        )
+
+    schemas = data.get("schemas") or []
+    if not schemas:
+        st.info("No user schemas or tables were discovered.")
+    for schema_index, schema in enumerate(schemas):
+        schema_name = str(schema.get("schema_name") or "Unnamed schema")
+        tables = schema.get("tables") or []
+        with st.expander(
+            f"Schema: {schema_name} · {len(tables)} tables/views",
+            expanded=(schema_index == 0),
+        ):
+            for table_index, table in enumerate(tables):
+                table_name = str(table.get("table_name") or "Unnamed table")
+                table_type = str(table.get("table_type") or "table")
+                st.markdown(f"#### {escape(table_name)} · {escape(table_type)}")
+                columns = table.get("columns") or []
+                if columns:
+                    column_rows = [
+                        {
+                            "Column": column.get("column_name"),
+                            "Type": column.get("data_type"),
+                            "PostgreSQL type": column.get("udt_name"),
+                            "Nullable": column.get("is_nullable"),
+                            "Default": column.get("column_default"),
+                            "Position": column.get("ordinal_position"),
+                            **(
+                                {
+                                    "Read": column.get("can_read"),
+                                    "Filter": column.get("can_filter"),
+                                    "Aggregate": column.get("can_aggregate"),
+                                    "Sensitive": column.get("is_sensitive"),
+                                    "Masking": column.get("masking_type"),
+                                }
+                                if "can_read" in column
+                                else {}
+                            ),
+                        }
+                        for column in columns
+                    ]
+                    st.dataframe(
+                        column_rows,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.caption("No columns were returned for this table.")
+
+                primary_keys = table.get("primary_keys") or []
+                foreign_keys = table.get("foreign_keys") or []
+                if primary_keys:
+                    st.markdown(
+                        "**Primary keys:** "
+                        + "; ".join(
+                            f"{pk.get('constraint_name')}: "
+                            + ", ".join(pk.get("columns") or [])
+                            for pk in primary_keys
+                        )
+                    )
+                if foreign_keys:
+                    st.markdown("**Foreign keys**")
+                    st.dataframe(
+                        [
+                            {
+                                "Constraint": fk.get("constraint_name"),
+                                "Columns": ", ".join(fk.get("columns") or []),
+                                "References": (
+                                    f"{fk.get('referenced_schema_name')}."
+                                    f"{fk.get('referenced_table_name')}"
+                                ),
+                                "Target columns": ", ".join(
+                                    fk.get("referenced_columns") or []
+                                ),
+                                "On update": fk.get("update_rule"),
+                                "On delete": fk.get("delete_rule"),
+                            }
+                            for fk in foreign_keys
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+    relationships = data.get("relationships") or []
+    if relationships:
+        st.markdown("### Relationships")
+        st.dataframe(
+            [
+                {
+                    "Constraint": item.get("constraint_name"),
+                    "Source": (
+                        f"{item.get('source_schema_name')}."
+                        f"{item.get('source_table_name')}"
+                    ),
+                    "Source columns": ", ".join(
+                        item.get("source_columns") or []
+                    ),
+                    "Target": (
+                        f"{item.get('target_schema_name')}."
+                        f"{item.get('target_table_name')}"
+                    ),
+                    "Target columns": ", ".join(
+                        item.get("target_columns") or []
+                    ),
+                    "On update": item.get("update_rule"),
+                    "On delete": item.get("delete_rule"),
+                }
+                for item in relationships
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+def _database_table_map(
+    schema_data: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    tables: dict[str, dict[str, Any]] = {}
+    for schema in schema_data.get("schemas") or []:
+        schema_name = str(schema.get("schema_name") or "")
+        for table in schema.get("tables") or []:
+            table_name = str(table.get("table_name") or "")
+            if schema_name and table_name:
+                tables[f"{schema_name}.{table_name}"] = {
+                    "schema_name": schema_name,
+                    **table,
+                }
+    return tables
+
+
+def database_access_page() -> None:
+    page_header(
+        "Database Data",
+        "Query only the tables, columns, and rows allowed by your roles.",
+        "Permission enforced",
+    )
+    st.info(
+        "This page never sends free-form SQL. The backend validates every "
+        "column, adds row filters, uses a read-only transaction, and masks "
+        "sensitive values before returning data."
+    )
+
+    connections = _fetch_database_connections()
+    if not connections:
+        st.info("No database connections are available.")
+        return
+    connection_by_label = {
+        (
+            f"{item.get('connection_name') or 'Database'} · "
+            f"#{item.get('connection_id')}"
+        ): item
+        for item in connections
+        if item.get("connection_id") is not None
+    }
+    selected_connection_label = st.selectbox(
+        "Database connection",
+        list(connection_by_label),
+        key="database_access_connection",
+    )
+    connection = connection_by_label[selected_connection_label]
+    connection_id = int(connection["connection_id"])
+    schema_state_key = f"filtered_database_schema_{connection_id}"
+
+    load_col, refresh_col = st.columns(2)
+    if load_col.button(
+        "Load my permission-filtered schema",
+        type="primary",
+        use_container_width=True,
+        key=f"load_filtered_schema_{connection_id}",
+    ):
+        ok, result, _ = request_api(
+            "GET",
+            f"/api/v1/database-connections/{connection_id}/schema/filtered",
+            timeout=60,
+        )
+        if ok:
+            st.session_state[schema_state_key] = result
+            st.success("Your allowed database schema was loaded.")
+        else:
+            st.error(result)
+    if refresh_col.button(
+        "Clear loaded schema",
+        use_container_width=True,
+        key=f"clear_filtered_schema_{connection_id}",
+    ):
+        st.session_state.pop(schema_state_key, None)
+        st.rerun()
+
+    schema_data = st.session_state.get(schema_state_key)
+    if not isinstance(schema_data, dict):
+        st.caption(
+            "Load the filtered schema first. If it is empty, an administrator "
+            "must grant a database policy to one of your roles."
+        )
+        return
+
+    _render_schema_metadata(schema_data)
+    tables = _database_table_map(schema_data)
+    if not tables:
+        st.warning("Your roles do not currently grant access to any table.")
+        return
+
+    st.markdown("### Secure query builder")
+    table_label = st.selectbox(
+        "Allowed table",
+        list(tables),
+        key=f"query_table_{connection_id}",
+    )
+    table = tables[table_label]
+    query_result_key = (
+        f"secure_query_result_{connection_id}_"
+        f"{table['schema_name']}_{table['table_name']}"
+    )
+    columns = table.get("columns") or []
+    readable = [
+        item["column_name"] for item in columns if item.get("can_read")
+    ]
+    filterable = [
+        item["column_name"] for item in columns if item.get("can_filter")
+    ]
+    aggregatable = [
+        item["column_name"]
+        for item in columns
+        if item.get("can_aggregate")
+    ]
+    masked = [
+        f"{item['column_name']} ({item.get('masking_type')})"
+        for item in columns
+        if item.get("is_sensitive")
+    ]
+    capability_cols = st.columns(4)
+    capability_cols[0].metric("Readable", len(readable))
+    capability_cols[1].metric("Filterable", len(filterable))
+    capability_cols[2].metric("Aggregatable", len(aggregatable))
+    capability_cols[3].metric(
+        "Row filters",
+        int(table.get("row_filters_enforced") or 0),
+    )
+    if masked:
+        st.caption("Masked on output: " + ", ".join(masked))
+
+    with st.form(f"secure_query_form_{connection_id}_{table_label}"):
+        selected_columns = st.multiselect(
+            "Columns to return",
+            readable,
+            default=readable[: min(5, len(readable))],
+        )
+        st.caption(
+            "Filterable columns: "
+            + (", ".join(filterable) if filterable else "None")
+        )
+        filters_json = st.text_area(
+            "Filters (JSON array)",
+            value="[]",
+            height=110,
+            help=(
+                'Example: [{"column_name":"status","operator":"eq",'
+                '"value":"active"}]'
+            ),
+        )
+        st.caption(
+            "Aggregatable columns: "
+            + (", ".join(aggregatable) if aggregatable else "None")
+        )
+        aggregates_json = st.text_area(
+            "Aggregates (JSON array)",
+            value="[]",
+            height=110,
+            help=(
+                'Example: [{"function":"sum","column_name":"amount",'
+                '"alias":"total_amount"}]'
+            ),
+        )
+        order_by_json = st.text_area(
+            "Order by (JSON array)",
+            value="[]",
+            height=90,
+            help=(
+                'Example: [{"field":"total_amount","direction":"desc"}]'
+            ),
+        )
+        q1, q2 = st.columns(2)
+        limit = q1.number_input(
+            "Maximum rows",
+            min_value=1,
+            max_value=1000,
+            value=100,
+            step=1,
+        )
+        offset = q2.number_input(
+            "Offset",
+            min_value=0,
+            max_value=1_000_000,
+            value=0,
+            step=1,
+        )
+        run_query = st.form_submit_button(
+            "Run secure query",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if run_query:
+        try:
+            filters = json.loads(filters_json or "[]")
+            aggregates = json.loads(aggregates_json or "[]")
+            order_by = json.loads(order_by_json or "[]")
+            if not all(isinstance(value, list) for value in [
+                filters,
+                aggregates,
+                order_by,
+            ]):
+                raise ValueError("Filters, aggregates, and order by must be arrays")
+        except (json.JSONDecodeError, ValueError) as exc:
+            st.error(f"Invalid query JSON: {exc}")
+        else:
+            ok, result, _ = request_api(
+                "POST",
+                f"/api/v1/database-connections/{connection_id}/query",
+                json={
+                    "schema_name": table["schema_name"],
+                    "table_name": table["table_name"],
+                    "columns": selected_columns,
+                    "filters": filters,
+                    "aggregates": aggregates,
+                    "order_by": order_by,
+                    "limit": int(limit),
+                    "offset": int(offset),
+                },
+                timeout=120,
+            )
+            if ok:
+                st.session_state[query_result_key] = result
+                st.success(
+                    f"Returned {result.get('row_count', 0)} permission-checked rows."
+                )
+            else:
+                st.error(result)
+
+    query_result = st.session_state.get(query_result_key)
+    if isinstance(query_result, dict):
+        if query_result.get("masked_columns"):
+            st.warning(
+                "Masked columns: "
+                + ", ".join(query_result["masked_columns"])
+            )
+        st.caption(
+            f"Row filters applied: {query_result.get('row_filters_applied', 0)}"
+        )
+        rows = query_result.get("rows") or []
+        if rows:
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+        else:
+            st.info("The secure query returned no rows.")
+
+
+def database_permissions_page() -> None:
+    page_header(
+        "Database Permissions",
+        "Publish table, column, masking, aggregation, and row rules per role.",
+        "Deny by default",
+    )
+    if not is_admin():
+        st.error("Tenant administrator permission is required.")
+        return
+
+    connections = _fetch_database_connections()
+    roles = _fetch_all_roles()
+    if not connections or not roles:
+        st.info("Create a database connection and at least one role first.")
+        return
+    connection_by_label = {
+        f"{item.get('connection_name')} · #{item.get('connection_id')}": item
+        for item in connections
+    }
+    role_by_label = {
+        f"{item.get('role_name')} · {item.get('role_id')}": item
+        for item in roles
+    }
+    s1, s2 = st.columns(2)
+    connection_label = s1.selectbox(
+        "Database connection",
+        list(connection_by_label),
+        key="permission_connection",
+    )
+    role_label = s2.selectbox(
+        "Role to configure",
+        list(role_by_label),
+        key="permission_role",
+    )
+    connection_id = int(connection_by_label[connection_label]["connection_id"])
+    role = role_by_label[role_label]
+    role_id = str(role["role_id"])
+
+    schema_ok, schema_data, _ = request_api(
+        "GET",
+        f"/api/v1/database-connections/{connection_id}/schema",
+        timeout=60,
+    )
+    if not schema_ok:
+        st.error(schema_data)
+        st.caption("Synchronize the database schema before creating policies.")
+        return
+    catalog_ok, catalog, _ = request_api(
+        "GET",
+        f"/api/v1/database-connections/{connection_id}/permissions",
+        timeout=60,
+    )
+    if not catalog_ok:
+        st.error(catalog)
+        return
+
+    all_tables = _database_table_map(schema_data)
+    role_policies = [
+        item
+        for item in (catalog.get("policies") or [])
+        if str(item.get("role_id")) == role_id
+    ]
+    existing_by_table = {
+        f"{item.get('schema_name')}.{item.get('table_name')}": item
+        for item in role_policies
+    }
+
+    st.caption(
+        "Capabilities from multiple roles are additive. Row-filter groups are "
+        "ORed across roles and ANDed inside each role. Masking uses the most "
+        "restrictive matching role."
+    )
+    if catalog.get("policies"):
+        st.dataframe(
+            [
+                {
+                    "Role": item.get("role_name") or item.get("role_id"),
+                    "Table": (
+                        f"{item.get('schema_name')}.{item.get('table_name')}"
+                    ),
+                    "Columns": len(item.get("columns") or []),
+                    "Row filters": len(item.get("row_filters") or []),
+                }
+                for item in catalog["policies"]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    selected_tables = st.multiselect(
+        "Tables this role can read",
+        list(all_tables),
+        default=[
+            name for name in existing_by_table if name in all_tables
+        ],
+        key=f"permission_tables_{connection_id}_{role_id}",
+    )
+    with st.form(f"database_policy_{connection_id}_{role_id}"):
+        table_forms: dict[str, dict[str, Any]] = {}
+        for table_label in selected_tables:
+            table = all_tables[table_label]
+            existing = existing_by_table.get(table_label, {})
+            existing_columns = {
+                item.get("column_name"): item
+                for item in existing.get("columns") or []
+            }
+            column_names = [
+                item.get("column_name")
+                for item in table.get("columns") or []
+                if item.get("column_name")
+            ]
+            with st.expander(f"Policy · {table_label}", expanded=True):
+                readable = st.multiselect(
+                    "can_read",
+                    column_names,
+                    default=[
+                        name
+                        for name, item in existing_columns.items()
+                        if item.get("can_read") and name in column_names
+                    ],
+                    key=f"perm_read_{connection_id}_{role_id}_{table_label}",
+                )
+                filterable = st.multiselect(
+                    "can_filter",
+                    column_names,
+                    default=[
+                        name
+                        for name, item in existing_columns.items()
+                        if item.get("can_filter") and name in column_names
+                    ],
+                    key=f"perm_filter_{connection_id}_{role_id}_{table_label}",
+                )
+                aggregatable = st.multiselect(
+                    "can_aggregate",
+                    column_names,
+                    default=[
+                        name
+                        for name, item in existing_columns.items()
+                        if item.get("can_aggregate") and name in column_names
+                    ],
+                    key=f"perm_aggregate_{connection_id}_{role_id}_{table_label}",
+                )
+                sensitive_options = sorted(
+                    set(readable) | set(filterable) | set(aggregatable)
+                )
+                sensitive = st.multiselect(
+                    "Sensitive columns",
+                    sensitive_options,
+                    default=[
+                        name
+                        for name, item in existing_columns.items()
+                        if item.get("is_sensitive")
+                        and name in sensitive_options
+                    ],
+                    key=f"perm_sensitive_{connection_id}_{role_id}_{table_label}",
+                )
+                masks: dict[str, str] = {}
+                mask_options = [
+                    "full",
+                    "partial",
+                    "email",
+                    "phone",
+                    "last4",
+                    "hash",
+                    "unmasked",
+                ]
+                for column_name in sensitive:
+                    if column_name not in readable:
+                        masks[column_name] = "none"
+                        st.caption(
+                            f"{column_name} is sensitive but not readable, "
+                            "so no output mask is needed."
+                        )
+                        continue
+                    previous_mask = str(
+                        existing_columns.get(column_name, {}).get(
+                            "masking_type", "full"
+                        )
+                    )
+                    masks[column_name] = st.selectbox(
+                        f"Masking · {column_name}",
+                        mask_options,
+                        index=(
+                            mask_options.index(previous_mask)
+                            if previous_mask in mask_options
+                            else 0
+                        ),
+                        key=(
+                            f"perm_mask_{connection_id}_{role_id}_"
+                            f"{table_label}_{column_name}"
+                        ),
+                    )
+                existing_filters = [
+                    {
+                        "filter_name": item.get("filter_name"),
+                        "column_name": item.get("column_name"),
+                        "operator": item.get("operator"),
+                        "value_source": item.get("value_source"),
+                        "value": item.get("value"),
+                        "enabled": item.get("enabled", True),
+                    }
+                    for item in existing.get("row_filters") or []
+                ]
+                row_filters_json = st.text_area(
+                    "Row filters (JSON array)",
+                    value=json.dumps(
+                        existing_filters,
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    height=155,
+                    key=(
+                        f"perm_rows_{connection_id}_{role_id}_{table_label}"
+                    ),
+                    help=(
+                        "value_source can be literal, current_user_id, "
+                        "current_tenant_id, or current_user_email."
+                    ),
+                )
+                table_forms[table_label] = {
+                    "readable": readable,
+                    "filterable": filterable,
+                    "aggregatable": aggregatable,
+                    "sensitive": sensitive,
+                    "masks": masks,
+                    "row_filters_json": row_filters_json,
+                }
+        save_policy = st.form_submit_button(
+            "Publish complete role policy",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if save_policy:
+        try:
+            table_payloads = []
+            for table_label in selected_tables:
+                table = all_tables[table_label]
+                values = table_forms[table_label]
+                row_filters = json.loads(
+                    values["row_filters_json"] or "[]"
+                )
+                if not isinstance(row_filters, list):
+                    raise ValueError(
+                        f"Row filters for {table_label} must be a JSON array"
+                    )
+                capability_columns = sorted(
+                    set(values["readable"])
+                    | set(values["filterable"])
+                    | set(values["aggregatable"])
+                )
+                column_payloads = []
+                for column_name in capability_columns:
+                    is_sensitive_column = column_name in values["sensitive"]
+                    column_payloads.append(
+                        {
+                            "column_name": column_name,
+                            "can_read": column_name in values["readable"],
+                            "can_filter": column_name in values["filterable"],
+                            "can_aggregate": (
+                                column_name in values["aggregatable"]
+                            ),
+                            "is_sensitive": is_sensitive_column,
+                            "masking_type": (
+                                values["masks"].get(column_name, "none")
+                                if is_sensitive_column
+                                else "none"
+                            ),
+                        }
+                    )
+                table_payloads.append(
+                    {
+                        "schema_name": table["schema_name"],
+                        "table_name": table["table_name"],
+                        "can_read": True,
+                        "columns": column_payloads,
+                        "row_filters": row_filters,
+                    }
+                )
+        except (json.JSONDecodeError, ValueError) as exc:
+            st.error(f"Invalid role policy: {exc}")
+        else:
+            ok, result, _ = request_api(
+                "PUT",
+                (
+                    f"/api/v1/database-connections/{connection_id}/"
+                    f"permissions/roles/{role_id}"
+                ),
+                json={"tables": table_payloads},
+                timeout=120,
+            )
+            if ok:
+                st.success("The complete role policy was published atomically.")
+                st.rerun()
+            else:
+                st.error(result)
+
+    action1, action2 = st.columns(2)
+    if action1.button(
+        "Preview this role's filtered schema",
+        use_container_width=True,
+        key=f"preview_policy_{connection_id}_{role_id}",
+    ):
+        ok, result, _ = request_api(
+            "GET",
+            f"/api/v1/database-connections/{connection_id}/schema/filtered",
+            params={"role_id": role_id},
+            timeout=60,
+        )
+        if ok:
+            st.session_state[
+                f"policy_preview_{connection_id}_{role_id}"
+            ] = result
+        else:
+            st.error(result)
+    if action2.button(
+        "Delete this role's database policy",
+        use_container_width=True,
+        key=f"delete_policy_{connection_id}_{role_id}",
+    ):
+        ok, result, _ = request_api(
+            "DELETE",
+            (
+                f"/api/v1/database-connections/{connection_id}/"
+                f"permissions/roles/{role_id}"
+            ),
+        )
+        if ok:
+            st.success("The role policy was deleted; access is now denied by default.")
+            st.rerun()
+        else:
+            st.error(result)
+
+    preview = st.session_state.get(
+        f"policy_preview_{connection_id}_{role_id}"
+    )
+    if isinstance(preview, dict):
+        st.markdown("### Role preview")
+        _render_schema_metadata(preview)
+
+
 def database_connections_page() -> None:
     page_header(
         "Database Connections",
         "Securely manage and test workspace PostgreSQL connections.",
-        "Encrypted credentials",
+        "14 database APIs",
     )
 
     if not is_admin():
@@ -1464,6 +2509,33 @@ def database_connections_page() -> None:
             m3.metric("SSL mode", connection.get("ssl_mode") or "-")
             m4.metric("Port", connection.get("port") or "-")
 
+            if st.button(
+                "Load exact connection record",
+                use_container_width=True,
+                key=f"get_database_connection_{connection_id}",
+            ):
+                ok, result, _ = request_api(
+                    "GET",
+                    f"/api/v1/database-connections/{connection_id}",
+                )
+                if ok:
+                    st.session_state[
+                        f"exact_database_connection_{connection_id}"
+                    ] = result
+                    st.success(
+                        "Connection loaded from the single-connection API."
+                    )
+                else:
+                    st.error(result)
+            exact_connection = st.session_state.get(
+                f"exact_database_connection_{connection_id}"
+            )
+            if isinstance(exact_connection, dict):
+                render_friendly_data(
+                    exact_connection,
+                    title="Exact connection response",
+                )
+
             details1, details2 = st.columns(2)
             details1.text_input(
                 "Host",
@@ -1541,6 +2613,79 @@ def database_connections_page() -> None:
                 key=f"refresh_db_{connection_id}",
             ):
                 st.rerun()
+
+            st.markdown("#### Schema discovery & metadata cache")
+            st.caption(
+                "Discover reads the live database structure without storing rows. "
+                "Sync saves only schemas, tables, columns, keys, and relationships."
+            )
+            discover_col, sync_col, cache_col = st.columns(3)
+            schema_state_key = f"database_schema_result_{connection_id}"
+
+            if discover_col.button(
+                "Discover live schema",
+                use_container_width=True,
+                key=f"discover_schema_{connection_id}",
+                disabled=(connection_status == "disabled"),
+            ):
+                with st.spinner("Discovering schemas, tables, and columns..."):
+                    ok, result, _ = request_api(
+                        "POST",
+                        (
+                            "/api/v1/database-connections/"
+                            f"{connection_id}/discover-schema"
+                        ),
+                        timeout=120,
+                    )
+                if ok:
+                    st.session_state[schema_state_key] = result
+                    st.success("Live database schema discovered.")
+                else:
+                    st.error(result)
+
+            if sync_col.button(
+                "Sync and cache schema",
+                type="primary",
+                use_container_width=True,
+                key=f"sync_schema_{connection_id}",
+                disabled=(connection_status == "disabled"),
+            ):
+                with st.spinner("Synchronizing schema metadata cache..."):
+                    ok, result, _ = request_api(
+                        "POST",
+                        (
+                            "/api/v1/database-connections/"
+                            f"{connection_id}/sync-schema"
+                        ),
+                        timeout=120,
+                    )
+                if ok:
+                    st.session_state[schema_state_key] = result
+                    st.success("Schema metadata cache synchronized.")
+                else:
+                    st.error(result)
+
+            if cache_col.button(
+                "Load cached schema",
+                use_container_width=True,
+                key=f"load_schema_cache_{connection_id}",
+            ):
+                ok, result, _ = request_api(
+                    "GET",
+                    f"/api/v1/database-connections/{connection_id}/schema",
+                    timeout=60,
+                )
+                if ok:
+                    st.session_state[schema_state_key] = result
+                    st.success("Latest cached schema loaded.")
+                else:
+                    st.error(result)
+
+            schema_result = st.session_state.get(schema_state_key)
+            if isinstance(schema_result, dict):
+                _render_schema_metadata(
+                    schema_result,
+                )
 
             st.markdown("#### Edit connection")
             with st.form(f"edit_database_connection_{connection_id}"):
@@ -1620,6 +2765,7 @@ def database_connections_page() -> None:
                         json=payload,
                     )
                     if ok:
+                        st.session_state.pop(schema_state_key, None)
                         st.success(
                             "Connection updated. Test it again before use."
                         )
@@ -1643,36 +2789,174 @@ def database_connections_page() -> None:
                     f"/api/v1/database-connections/{connection_id}",
                 )
                 if ok:
+                    st.session_state.pop(schema_state_key, None)
                     st.success("Database connection deleted.")
                     st.rerun()
                 else:
                     st.error(result)
 
 
-def _load_openapi_catalog() -> tuple[list[dict[str, Any]], str | None]:
-    """Load every FastAPI operation from OpenAPI without exposing raw JSON."""
-    ok, schema, _ = request_api(
+def _resolve_openapi_node(
+    document: dict[str, Any],
+    node: Any,
+) -> dict[str, Any]:
+    """Resolve local OpenAPI references used by parameters and schemas."""
+    if not isinstance(node, dict):
+        return {}
+    reference = node.get("$ref")
+    if not isinstance(reference, str) or not reference.startswith("#/"):
+        return node
+    current: Any = document
+    for part in reference[2:].split("/"):
+        if not isinstance(current, dict):
+            return node
+        current = current.get(part.replace("~1", "/").replace("~0", "~"))
+    return current if isinstance(current, dict) else node
+
+
+def _openapi_example(
+    document: dict[str, Any],
+    schema: Any,
+    seen: set[str] | None = None,
+) -> Any:
+    """Build an editable request example from an OpenAPI schema."""
+    if not isinstance(schema, dict):
+        return None
+    seen = set(seen or set())
+    reference = schema.get("$ref")
+    if isinstance(reference, str):
+        if reference in seen:
+            return None
+        seen.add(reference)
+        return _openapi_example(
+            document,
+            _resolve_openapi_node(document, schema),
+            seen,
+        )
+    if "example" in schema:
+        return schema["example"]
+    if "default" in schema:
+        return schema["default"]
+    enum_values = schema.get("enum") or []
+    if enum_values:
+        return enum_values[0]
+
+    schema_type = schema.get("type")
+    if schema_type == "object" or schema.get("properties"):
+        properties = schema.get("properties") or {}
+        required = set(schema.get("required") or [])
+        result = {}
+        for name, property_schema in properties.items():
+            resolved = _resolve_openapi_node(document, property_schema)
+            if name not in required and not any(
+                key in resolved for key in ("default", "example", "enum")
+            ):
+                continue
+            result[name] = _openapi_example(document, property_schema, seen)
+        return result
+    if schema_type == "array":
+        item_example = _openapi_example(document, schema.get("items") or {}, seen)
+        return [] if item_example is None else [item_example]
+    if schema_type == "boolean":
+        return False
+    if schema_type == "integer":
+        return int(schema.get("minimum", 1))
+    if schema_type == "number":
+        return float(schema.get("minimum", 1))
+    if schema_type == "string":
+        value_format = schema.get("format")
+        if value_format == "email":
+            return "user@example.com"
+        if value_format == "uuid":
+            return "00000000-0000-0000-0000-000000000000"
+        if value_format in {"date-time", "datetime"}:
+            return "2026-08-11T12:00:00Z"
+        if value_format == "date":
+            return "2026-08-11"
+        if value_format == "password":
+            return "ChangeMe123!"
+        return "string"
+    for composed_key in ("allOf", "oneOf", "anyOf"):
+        composed = schema.get(composed_key) or []
+        if composed:
+            if composed_key == "allOf":
+                merged = {}
+                for item in composed:
+                    value = _openapi_example(document, item, seen)
+                    if isinstance(value, dict):
+                        merged.update(value)
+                return merged
+            return _openapi_example(document, composed[0], seen)
+    return None
+
+
+def _redact_api_payload(value: Any) -> Any:
+    """Keep API Explorer useful without displaying secrets or tokens."""
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            normalized = str(key).lower()
+            if (
+                normalized in SENSITIVE_UI_FIELDS
+                or "password" in normalized
+                or normalized.endswith("_token")
+                or normalized.endswith("_secret")
+            ):
+                redacted[key] = "••••••"
+            else:
+                redacted[key] = _redact_api_payload(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_api_payload(item) for item in value]
+    return value
+
+
+def _load_openapi_catalog(
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, str | None]:
+    """Load every executable FastAPI operation from OpenAPI."""
+    ok, document, _ = request_api(
         "GET",
         "/openapi.json",
         auth=False,
         timeout=30,
     )
     if not ok:
-        return [], str(schema)
-    if not isinstance(schema, dict):
-        return [], "The backend returned an invalid OpenAPI document."
+        return [], None, str(document)
+    if not isinstance(document, dict):
+        return [], None, "The backend returned an invalid OpenAPI document."
 
     operations: list[dict[str, Any]] = []
-    supported_methods = {"get", "post", "put", "patch", "delete"}
+    supported_methods = {
+        "get",
+        "post",
+        "put",
+        "patch",
+        "delete",
+        "head",
+        "options",
+    }
 
-    for path, path_item in (schema.get("paths") or {}).items():
+    for path, path_item in (document.get("paths") or {}).items():
         if not isinstance(path_item, dict):
             continue
-        for method, operation in path_item.items():
+        path_parameters = path_item.get("parameters") or []
+        for method, raw_operation in path_item.items():
             if method.lower() not in supported_methods:
                 continue
-            operation = operation if isinstance(operation, dict) else {}
+            operation = (
+                raw_operation if isinstance(raw_operation, dict) else {}
+            )
+            parameter_map: dict[tuple[str, str], dict[str, Any]] = {}
+            for raw_parameter in [
+                *path_parameters,
+                *(operation.get("parameters") or []),
+            ]:
+                parameter = _resolve_openapi_node(document, raw_parameter)
+                parameter_map[
+                    (str(parameter.get("in")), str(parameter.get("name")))
+                ] = parameter
             tags = operation.get("tags") or ["Other"]
+            security = operation.get("security", document.get("security"))
             operations.append(
                 {
                     "path": str(path),
@@ -1683,10 +2967,39 @@ def _load_openapi_catalog() -> tuple[list[dict[str, Any]], str | None]:
                         or "API operation"
                     ),
                     "description": operation.get("description") or "",
+                    "operation_id": operation.get("operationId"),
                     "tags": [str(tag) for tag in tags],
-                    "requires_auth": bool(operation.get("security")),
+                    "requires_auth": bool(security),
+                    "parameters": list(parameter_map.values()),
+                    "request_body": operation.get("requestBody"),
+                    "system_endpoint": False,
                 }
             )
+
+    existing = {(item["method"], item["path"]) for item in operations}
+    system_endpoints = [
+        ("GET", "/openapi.json", "OpenAPI specification"),
+        ("GET", "/docs", "Swagger API documentation"),
+        ("GET", "/redoc", "ReDoc API documentation"),
+        ("GET", "/metrics", "Prometheus service metrics"),
+    ]
+    for method, path, summary in system_endpoints:
+        if (method, path) in existing:
+            continue
+        operations.append(
+            {
+                "path": path,
+                "method": method,
+                "summary": summary,
+                "description": "Framework or operational endpoint.",
+                "operation_id": None,
+                "tags": ["System"],
+                "requires_auth": False,
+                "parameters": [],
+                "request_body": None,
+                "system_endpoint": True,
+            }
+        )
 
     operations.sort(
         key=lambda item: (
@@ -1695,30 +3008,86 @@ def _load_openapi_catalog() -> tuple[list[dict[str, Any]], str | None]:
             item["method"],
         )
     )
-    return operations, None
+    return operations, document, None
+
+
+def _endpoint_app_location(operation: dict[str, Any]) -> str:
+    """Show where a live endpoint is available in the user interface."""
+    path = str(operation.get("path") or "")
+    method = str(operation.get("method") or "GET")
+
+    if operation.get("system_endpoint"):
+        return "All Project APIs"
+    if path == "/api/v1/welcome":
+        return "Overview"
+    if path.startswith("/api/v1/auth"):
+        if path.endswith("/refresh"):
+            return "Automatic session refresh"
+        if path.endswith("/me"):
+            return "Account"
+        return "Sign in / Create workspace"
+    if path.startswith("/api/v1/database-connections"):
+        if "/permissions" in path:
+            return "Database Permissions"
+        if path.endswith("/schema/filtered") or path.endswith("/query"):
+            return "Database Data"
+        return "Database Connections"
+    if path.startswith("/api/v1/tasks"):
+        return "Tasks"
+    if path.startswith("/api/v1/users"):
+        return "Users"
+    if path.startswith("/api/v1/roles"):
+        return "Roles"
+    if path.startswith("/api/v1/projects"):
+        if "/files" in path:
+            return "Documents"
+        if path.endswith("/search") or path.endswith("/ask"):
+            return "AI Assistant"
+        return "Projects"
+    if method in {"GET", "POST", "PATCH", "PUT", "DELETE"}:
+        return "All Project APIs"
+    return "All Project APIs"
+
+
+def _operation_key(operation: dict[str, Any]) -> str:
+    return f"{operation.get('method')} {operation.get('path')}"
+
+
+def _operation_group_name(operation: dict[str, Any]) -> str:
+    tags = [str(tag) for tag in operation.get("tags") or []]
+    return next(
+        (tag for tag in tags if tag.lower() not in {"api_v1", "api"}),
+        tags[0] if tags else "Other",
+    )
 
 
 def api_catalog_page() -> None:
     page_header(
-        "API Catalog",
-        "A complete live catalog generated from the backend OpenAPI specification.",
-        "Auto-synced",
+        "All Project APIs",
+        "Every FastAPI endpoint is listed below and can be run from the same screen.",
+        "Live OpenAPI coverage",
     )
 
-    operations, error = _load_openapi_catalog()
-    if error:
-        st.error(error)
+    operations, document, error = _load_openapi_catalog()
+    if error or document is None:
+        st.error(error or "Unable to load the OpenAPI specification.")
         st.caption(
             "Confirm that FastAPI is running and that /openapi.json is available."
         )
         return
-
     if not operations:
         st.info("No API operations were found.")
         return
 
     methods = sorted({item["method"] for item in operations})
     tags = sorted({tag for item in operations for tag in item["tags"]})
+    summary_cols = st.columns(3)
+    summary_cols[0].metric("Endpoints", len(operations))
+    summary_cols[1].metric("API groups", len(tags))
+    summary_cols[2].metric(
+        "Authenticated",
+        sum(1 for item in operations if item["requires_auth"]),
+    )
 
     c1, c2, c3 = st.columns([2, 1, 1])
     search_text = c1.text_input(
@@ -1751,31 +3120,360 @@ def api_catalog_page() -> None:
         f'<span class="api-count">{len(filtered)} of {len(operations)} endpoints</span>',
         unsafe_allow_html=True,
     )
+    if not filtered:
+        st.info("No endpoints match the current filters.")
+        return
 
-    grouped: dict[str, list[dict[str, Any]]] = {}
+    st.markdown("### Complete API directory")
+    st.caption(
+        "This directory is generated live from FastAPI /openapi.json. "
+        "It includes every current project API and updates automatically when "
+        "a new backend endpoint is added."
+    )
+
+    grouped_operations: dict[str, list[dict[str, Any]]] = {}
     for item in filtered:
-        group = item["tags"][0] if item["tags"] else "Other"
-        grouped.setdefault(group, []).append(item)
+        group_name = _operation_group_name(item)
+        grouped_operations.setdefault(group_name, []).append(item)
 
-    for group, items in grouped.items():
-        st.markdown(f"### {escape(group.title())}")
-        for item in items:
+    for group_name, group_operations in grouped_operations.items():
+        st.markdown(f"#### {escape(str(group_name).replace('_', ' ').title())}")
+        for item in group_operations:
+            item_key = re.sub(
+                r"[^a-zA-Z0-9]+",
+                "_",
+                _operation_key(item),
+            ).strip("_")
             method_class = f"api-{item['method'].lower()}"
-            auth_text = "Authentication required" if item["requires_auth"] else "Public endpoint"
-            st.markdown(
+            location = _endpoint_app_location(item)
+            api_col, select_col = st.columns([6, 1])
+            api_col.markdown(
                 f'<div class="api-summary">'
                 f'<div style="display:flex;gap:.75rem;align-items:flex-start">'
-                f'<span class="api-method {method_class}">{escape(item["method"])}</span>'
+                f'<span class="api-method {method_class}">'
+                f'{escape(item["method"])}</span>'
                 f'<div><div class="api-path">{escape(item["path"])}</div>'
                 f'<div class="api-description">'
-                f'{escape(str(item["summary"]))} · {escape(auth_text)}'
+                f'{escape(str(item["summary"]))} · App: {escape(location)}'
                 f'</div></div></div></div>',
                 unsafe_allow_html=True,
             )
+            if select_col.button(
+                "Run",
+                key=f"directory_run_{item_key}",
+                use_container_width=True,
+            ):
+                st.session_state["api_endpoint_selector"] = (
+                    f"{item['method']:<7} {item['path']} · {item['summary']}"
+                )
+                st.toast(
+                    f"Selected {item['method']} {item['path']}. "
+                    "Use the runner below."
+                )
+
+    st.markdown("### Run an endpoint")
+    endpoint_labels = [
+        f"{item['method']:<7} {item['path']} · {item['summary']}"
+        for item in filtered
+    ]
+    current_endpoint = st.session_state.get("api_endpoint_selector")
+    if current_endpoint not in endpoint_labels:
+        st.session_state["api_endpoint_selector"] = endpoint_labels[0]
+    selected_label = st.selectbox(
+        "Endpoint",
+        endpoint_labels,
+        key="api_endpoint_selector",
+    )
+    selected = filtered[endpoint_labels.index(selected_label)]
+    endpoint_key = re.sub(
+        r"[^a-zA-Z0-9]+",
+        "_",
+        f"{selected['method']}_{selected['path']}",
+    ).strip("_")
+
+    method_class = f"api-{selected['method'].lower()}"
+    auth_text = (
+        "Authentication required"
+        if selected["requires_auth"]
+        else "Public endpoint"
+    )
+    st.markdown(
+        f'<div class="api-summary">'
+        f'<div style="display:flex;gap:.75rem;align-items:flex-start">'
+        f'<span class="api-method {method_class}">'
+        f'{escape(selected["method"])}</span>'
+        f'<div><div class="api-path">{escape(selected["path"])}</div>'
+        f'<div class="api-description">'
+        f'{escape(str(selected["summary"]))} · {escape(auth_text)}'
+        f'</div></div></div></div>',
+        unsafe_allow_html=True,
+    )
+    if selected["description"]:
+        st.caption(str(selected["description"]))
+
+    parameter_values: dict[tuple[str, str], str] = {}
+    parameters = selected.get("parameters") or []
+    if parameters:
+        st.markdown("#### Parameters")
+    for parameter in parameters:
+        location = str(parameter.get("in") or "query")
+        name = str(parameter.get("name") or "parameter")
+        parameter_schema = _resolve_openapi_node(
+            document,
+            parameter.get("schema") or {},
+        )
+        default = parameter.get("example", parameter_schema.get("default", ""))
+        required = bool(parameter.get("required")) or location == "path"
+        help_text = str(parameter.get("description") or "")
+        label = f"{name} · {location}"
+        if required:
+            label += " · required"
+        value = st.text_input(
+            label,
+            value="" if default is None else str(default),
+            help=help_text or None,
+            key=f"api_parameter_{endpoint_key}_{location}_{name}",
+        )
+        parameter_values[(location, name)] = value
+
+    request_body = _resolve_openapi_node(
+        document,
+        selected.get("request_body") or {},
+    )
+    content_map = request_body.get("content") or {}
+    selected_content_type = None
+    json_body_text = ""
+    raw_body_text = ""
+    multipart_files: list[tuple[str, tuple[str, bytes, str]]] = []
+    form_values: dict[str, str] = {}
+
+    if content_map:
+        st.markdown("#### Request body")
+        content_types = list(content_map)
+        selected_content_type = st.selectbox(
+            "Content type",
+            content_types,
+            key=f"api_content_type_{endpoint_key}",
+        )
+        media_schema = (content_map.get(selected_content_type) or {}).get(
+            "schema"
+        ) or {}
+        resolved_media_schema = _resolve_openapi_node(document, media_schema)
+
+        if selected_content_type == "application/json" or selected_content_type.endswith(
+            "+json"
+        ):
+            example = _openapi_example(document, media_schema)
+            json_body_text = st.text_area(
+                "JSON body",
+                value=json.dumps(
+                    {} if example is None else example,
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                height=260,
+                key=f"api_json_body_{endpoint_key}",
+            )
+        elif selected_content_type in {
+            "multipart/form-data",
+            "application/x-www-form-urlencoded",
+        }:
+            properties = resolved_media_schema.get("properties") or {}
+            required_fields = set(resolved_media_schema.get("required") or [])
+            for property_name, raw_property_schema in properties.items():
+                property_schema = _resolve_openapi_node(
+                    document,
+                    raw_property_schema,
+                )
+                is_file = property_schema.get("format") == "binary"
+                is_file_list = (
+                    property_schema.get("type") == "array"
+                    and _resolve_openapi_node(
+                        document,
+                        property_schema.get("items") or {},
+                    ).get("format")
+                    == "binary"
+                )
+                required_suffix = (
+                    " · required" if property_name in required_fields else ""
+                )
+                if is_file or is_file_list:
+                    uploaded = st.file_uploader(
+                        property_name + required_suffix,
+                        accept_multiple_files=is_file_list,
+                        key=f"api_file_{endpoint_key}_{property_name}",
+                    )
+                    uploaded_files = (
+                        uploaded if isinstance(uploaded, list) else [uploaded]
+                    )
+                    for uploaded_file in uploaded_files:
+                        if uploaded_file is not None:
+                            multipart_files.append(
+                                (
+                                    property_name,
+                                    (
+                                        uploaded_file.name,
+                                        uploaded_file.getvalue(),
+                                        uploaded_file.type
+                                        or "application/octet-stream",
+                                    ),
+                                )
+                            )
+                else:
+                    example = _openapi_example(document, property_schema)
+                    form_values[property_name] = st.text_input(
+                        property_name + required_suffix,
+                        value="" if example is None else str(example),
+                        key=f"api_form_{endpoint_key}_{property_name}",
+                    )
+        else:
+            raw_body_text = st.text_area(
+                "Raw request body",
+                height=220,
+                key=f"api_raw_body_{endpoint_key}",
+            )
+
+    option_cols = st.columns([1.2, 1, 1])
+    send_auth = option_cols[0].checkbox(
+        "Send session token",
+        value=bool(selected["requires_auth"]),
+        key=f"api_auth_{endpoint_key}",
+    )
+    timeout_seconds = option_cols[1].number_input(
+        "Timeout (seconds)",
+        min_value=1,
+        max_value=300,
+        value=60,
+        key=f"api_timeout_{endpoint_key}",
+    )
+    execute = option_cols[2].button(
+        "Run endpoint",
+        type="primary",
+        use_container_width=True,
+        key=f"api_execute_{endpoint_key}",
+    )
+
+    if execute:
+        final_path = selected["path"]
+        query_params: dict[str, str] = {}
+        request_headers: dict[str, str] = {}
+        request_cookies: dict[str, str] = {}
+        validation_error = None
+
+        for parameter in parameters:
+            location = str(parameter.get("in") or "query")
+            name = str(parameter.get("name") or "parameter")
+            value = parameter_values.get((location, name), "").strip()
+            required = bool(parameter.get("required")) or location == "path"
+            if required and not value:
+                validation_error = f"{name} is required."
+                break
+            if not value:
+                continue
+            if location == "path":
+                final_path = final_path.replace(
+                    "{" + name + "}",
+                    quote(value, safe=""),
+                )
+            elif location == "query":
+                query_params[name] = value
+            elif location == "header":
+                request_headers[name] = value
+            elif location == "cookie":
+                request_cookies[name] = value
+
+        request_kwargs: dict[str, Any] = {}
+        if query_params:
+            request_kwargs["params"] = query_params
+        if request_headers:
+            request_kwargs["headers"] = request_headers
+        if request_cookies:
+            request_kwargs["cookies"] = request_cookies
+
+        if not validation_error and selected_content_type:
+            body_required = bool(request_body.get("required"))
+            if selected_content_type == "application/json" or selected_content_type.endswith(
+                "+json"
+            ):
+                try:
+                    request_kwargs["json"] = json.loads(json_body_text)
+                except json.JSONDecodeError as exc:
+                    validation_error = f"Invalid JSON body: {exc}"
+            elif selected_content_type == "multipart/form-data":
+                if body_required and not multipart_files and not any(
+                    value for value in form_values.values()
+                ):
+                    validation_error = "The request body is required."
+                request_kwargs["files"] = multipart_files
+                request_kwargs["data"] = form_values
+            elif selected_content_type == "application/x-www-form-urlencoded":
+                request_kwargs["data"] = form_values
+            else:
+                if body_required and not raw_body_text:
+                    validation_error = "The request body is required."
+                request_headers.setdefault(
+                    "Content-Type",
+                    selected_content_type,
+                )
+                request_kwargs["headers"] = request_headers
+                request_kwargs["data"] = raw_body_text
+
+        if validation_error:
+            st.error(validation_error)
+        else:
+            with st.spinner(
+                f"Running {selected['method']} {final_path}..."
+            ):
+                ok, result, status_code = request_api(
+                    selected["method"],
+                    final_path,
+                    auth=send_auth,
+                    timeout=int(timeout_seconds),
+                    **request_kwargs,
+                )
+            st.session_state["api_explorer_last_result"] = {
+                "endpoint": f"{selected['method']} {final_path}",
+                "ok": ok,
+                "status_code": status_code,
+                "result": result,
+            }
+
+    last_result = st.session_state.get("api_explorer_last_result")
+    if isinstance(last_result, dict):
+        st.markdown("### Latest response")
+        message = (
+            f"{last_result.get('endpoint')} · HTTP "
+            f"{last_result.get('status_code')}"
+        )
+        if last_result.get("ok"):
+            st.success(message)
+        else:
+            st.error(message)
+        result = last_result.get("result")
+        if isinstance(result, bytes):
+            try:
+                decoded = result.decode("utf-8")
+            except UnicodeDecodeError:
+                decoded = ""
+            if decoded and len(decoded) <= 20000:
+                st.code(decoded, language=None)
+            st.download_button(
+                "Download response",
+                data=result,
+                file_name="api-response.bin",
+                use_container_width=True,
+            )
+        elif isinstance(result, (dict, list)):
+            st.json(_redact_api_payload(result), expanded=True)
+        elif result is None:
+            st.info("The endpoint completed without a response body.")
+        else:
+            st.code(str(result), language=None)
 
     st.caption(
-        "This page is generated from /openapi.json. New backend endpoints "
-        "will appear automatically after the backend restarts."
+        "The explorer is generated from /openapi.json and includes system "
+        "endpoints. Restart FastAPI after backend route changes, then refresh "
+        "this page; new endpoints appear automatically."
     )
 
 
@@ -1884,12 +3582,14 @@ def main() -> None:
         "Projects": projects_page,
         "Documents": documents_page,
         "AI Assistant": assistant_page,
+        "Database Access": database_access_page,
         "Tasks": tasks_page,
         "Account": account_page,
         "Users": users_page,
         "Roles": roles_page,
         "Database Connections": database_connections_page,
-        "API Catalog": api_catalog_page,
+        "Database Permissions": database_permissions_page,
+        "API Explorer": api_catalog_page,
     }
     pages[page]()
 

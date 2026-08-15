@@ -520,7 +520,7 @@ class NLPController(BaseController):
             rrf_k=rrf_k,
         )
 
-    def answer_from_hybrid_results(
+    async def answer_from_hybrid_results(
         self,
         question: str,
         results: list[dict],
@@ -662,7 +662,7 @@ class NLPController(BaseController):
             ]
         )
 
-        answer = (
+        answer = await self._maybe_await(
             self.generation_client.generate_text(
                 prompt=generation_prompt,
                 chat_history=chat_history,

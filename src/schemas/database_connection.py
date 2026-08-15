@@ -108,3 +108,99 @@ class DatabaseConnectionTestResponse(BaseModel):
     ssl_in_use: bool | None = None
     server_version: str | None = None
     tested_at: datetime
+
+
+class DatabaseColumnResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    column_name: str
+    ordinal_position: int = Field(..., ge=1)
+    data_type: str
+    udt_name: str
+    is_nullable: bool
+    column_default: str | None = None
+    character_maximum_length: int | None = None
+    numeric_precision: int | None = None
+    numeric_scale: int | None = None
+    datetime_precision: int | None = None
+
+
+class DatabasePrimaryKeyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    constraint_name: str
+    columns: list[str]
+
+
+class DatabaseForeignKeyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    constraint_name: str
+    columns: list[str]
+    referenced_schema_name: str
+    referenced_table_name: str
+    referenced_columns: list[str]
+    update_rule: str
+    delete_rule: str
+
+
+class DatabaseRelationshipResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    constraint_name: str
+    source_schema_name: str
+    source_table_name: str
+    source_columns: list[str]
+    target_schema_name: str
+    target_table_name: str
+    target_columns: list[str]
+    update_rule: str
+    delete_rule: str
+
+
+class DatabaseTableResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    schema_name: str
+    table_name: str
+    table_type: str
+    columns: list[DatabaseColumnResponse] = Field(default_factory=list)
+    primary_keys: list[DatabasePrimaryKeyResponse] = Field(
+        default_factory=list
+    )
+    foreign_keys: list[DatabaseForeignKeyResponse] = Field(
+        default_factory=list
+    )
+
+
+class DatabaseSchemaResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    schema_name: str
+    tables: list[DatabaseTableResponse] = Field(default_factory=list)
+
+
+class DatabaseSchemaMetadataBase(BaseModel):
+    connection_id: int
+    database_name: str
+    schema_count: int = Field(..., ge=0)
+    table_count: int = Field(..., ge=0)
+    column_count: int = Field(..., ge=0)
+    primary_key_count: int = Field(..., ge=0)
+    foreign_key_count: int = Field(..., ge=0)
+    relationship_count: int = Field(..., ge=0)
+    schemas: list[DatabaseSchemaResponse] = Field(default_factory=list)
+    relationships: list[DatabaseRelationshipResponse] = Field(
+        default_factory=list
+    )
+
+
+class DatabaseSchemaDiscoveryResponse(DatabaseSchemaMetadataBase):
+    discovered_at: datetime
+
+
+class DatabaseSchemaSyncResponse(DatabaseSchemaMetadataBase):
+    synced_at: datetime
+    previous_synced_at: datetime | None = None
+    changed: bool
+    permissions_invalidated: bool = False
+    schema_hash: str = Field(..., min_length=64, max_length=64)
+
+
+class DatabaseSchemaCacheResponse(DatabaseSchemaMetadataBase):
+    synced_at: datetime
+    schema_hash: str = Field(..., min_length=64, max_length=64)
