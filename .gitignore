@@ -262,7 +262,6 @@ artifacts/
 # Local machine-learning model files
 # ==================================================
 
-models/
 huggingface/
 .huggingface/
 *.safetensors
@@ -291,3 +290,8 @@ compose.override.yml
 
 # Local experiments
 /New folder/
+
+
+# Keep Alembic*migrations in Git
+!src/models/db_schemes/rag_db/alembic/versions*
+!src/models/db_schemes/rag_db/alembic/versions/*.py
